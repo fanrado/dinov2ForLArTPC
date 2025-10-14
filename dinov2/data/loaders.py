@@ -48,7 +48,7 @@ def _parse_dataset_str(dataset_str: str):
     kwargs = {}
 
     for token in tokens[1:]:
-        key, value = token.split("=")
+        key, value = token.split("=",1)
         assert key in ("root", "extra", "split")
         kwargs[key] = value
 
@@ -58,6 +58,9 @@ def _parse_dataset_str(dataset_str: str):
             kwargs["split"] = ImageNet.Split[kwargs["split"]]
     elif name == "ImageNet22k":
         class_ = ImageNet22k
+    elif name in ("CVN", "CVNDataset"):
+        from .datasets.cvn import CVNDataset as _CVN
+        class_ = _CVN
     else:
         raise ValueError(f'Unsupported dataset "{name}"')
 

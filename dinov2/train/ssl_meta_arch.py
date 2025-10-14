@@ -345,24 +345,95 @@ class SSLMetaArch(nn.Module):
 
         return loss_dict
 
+
     def fsdp_synchronize_streams(self):
-        if self.need_to_synchronize_fsdp_streams:
+        if not self.need_to_synchronize_fsdp_streams:
+            return
+
+    # Try to flush device work; ignore if CUDA not available/initialized.
+        try:
             torch.cuda.synchronize()
-            self.student.dino_head._streams = (
-                self.teacher.dino_head._streams
-            ) = self.student.backbone._streams = self.teacher.backbone._streams
-            self.need_to_synchronize_fsdp_streams = False
+        except Exception:
+            pass
+
+        def _unwrap(m):
+        # If wrapped by FSDP, unwrap to the real module; else return as-is.
+            if m is None:
+                return None
+            return getattr(m, "_fsdp_wrapped_module", m)
+
+    # Unwrap student/teacher backbones and heads
+        student_bb = _unwrap(getattr(self.student, "backbone", None))
+        teacher_bb = _unwrap(getattr(self.teacher, "backbone", None))
+        student_head = _unwrap(getattr(self.student, "dino_head", None))
+        teacher_head = _unwrap(getattr(self.teacher, "dino_head", None))
+
+    # Copy teacher streams to student if the attribute exists
+        try:
+            t_streams_bb = getattr(teacher_bb, "_streams", None)
+            if (t_streams_bb is not None) and (student_bb is not None):
+                setattr(student_bb, "_streams", t_streams_bb)
+        except Exception:
+            pass
+
+        try:
+            t_streams_head = getattr(teacher_head, "_streams", None)
+            if (t_streams_head is not None) and (student_head is not None):
+                setattr(student_head, "_streams", t_streams_head)
+        except Exception:
+            pass
+
+    # Done; never block training if nothing to sync
+        self.need_to_synchronize_fsdp_streams = False
+
 
     def update_teacher(self, m):
-        student_param_list = []
-        teacher_param_list = []
         with torch.no_grad():
+            student_param_list = []
+            teacher_param_list = []
+
+        # Try to collect params per submodule (backbone / heads), preferring FSDP modules if present
             for k in self.student.keys():
-                for ms, mt in zip(get_fsdp_modules(self.student[k]), get_fsdp_modules(self.teacher[k])):
-                    student_param_list += ms.params
-                    teacher_param_list += mt.params
-            torch._foreach_mul_(teacher_param_list, m)
-            torch._foreach_add_(teacher_param_list, student_param_list, alpha=1 - m)
+                s_mod = self.student[k]
+                t_mod = self.teacher[k]
+
+            # FSDP-aware path
+                try:
+                    s_fsdp = list(get_fsdp_modules(s_mod))
+                    t_fsdp = list(get_fsdp_modules(t_mod))
+                except Exception:
+                    s_fsdp, t_fsdp = [], []
+
+                if s_fsdp and t_fsdp and len(s_fsdp) == len(t_fsdp):
+                # Some FSDP versions expose .params, otherwise fall back to .parameters()
+                    for ms, mt in zip(s_fsdp, t_fsdp):
+                        s_params = getattr(ms, "params", list(ms.parameters()))
+                        t_params = getattr(mt, "params", list(mt.parameters()))
+                        student_param_list += [p for p in s_params if p.requires_grad]
+                        teacher_param_list += list(t_params)
+                else:
+                # Non-FSDP (or mismatch): just use the raw modules
+                    student_param_list += [p for p in s_mod.parameters() if p.requires_grad]
+                    teacher_param_list += list(t_mod.parameters())
+
+        # Ultimate fallback: whole-model zip
+            if not teacher_param_list:
+                student_param_list = [p for p in self.student.parameters() if p.requires_grad]
+                teacher_param_list = list(self.teacher.parameters())
+
+        # Sanity: keep lists aligned
+            assert len(student_param_list) == len(teacher_param_list), \
+                f"Param length mismatch: student={len(student_param_list)} teacher={len(teacher_param_list)}"
+
+        # Fast foreach when it works; otherwise per-tensor loop
+            try:
+                torch._foreach_mul_(teacher_param_list, m)
+                torch._foreach_add_(teacher_param_list, student_param_list, alpha=1 - m)
+            except Exception:
+                for tp, sp in zip(teacher_param_list, student_param_list):
+                    tp.mul_(m).add_(sp, alpha=1 - m)
+
+
 
     def train(self):
         super().train()

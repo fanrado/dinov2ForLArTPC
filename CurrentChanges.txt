@@ -1,0 +1,23 @@
+DINOv2 on WCWC cluster
+1) Change of requirements
+I switch to Torch 2.3.1 to make sure it works well with our GPUs, I found this one to be most stable on our clauster. (Test with their configs shows problems with xformers package, they require 0.0.18; however, it does not exist through pip anymore, can potentially be installed separately. I think we need better torch version anyway)
+Removed requirement version for torchvision and xformers to automatically grab once compatible with new torch; that might not be even relevant if we stop using ViT, but to run it out of the box those are required
+2) CVN data set
+Any data set can be passed to their code. Pictures specifically have to be converted to 2D + 3 dimensions (X,Y,3) where x,y is a picture itself and 3 other dimensions are RGB representation for ViT. In our case we can do following : 
+a) Fill each of 3 dimensions with different plane = model will learn interplane features
+b) Fill all 3 dimensions with copies of a single plane = model learns only one plane. Copies introduce small overhead in first layer, but should not impact downstream logic or number of parameters 
+To get data one needs to add a class for this data in dinov2/data/datasets , which in our case is cvn.py
+Refer to this file to see how it reads files from repository provided by Nitish
+Add this data set in __init__.py
+Where are many ways to set parameters, easiest here without trying to change inputs to ViT is through adding extra to path. To get it working small change was made to loaders.py
+also in loader.py they hardcoded their data set; thus one have to hardcode dataset you want to use (the name would be set in running command, we are looking for CVN for example)
+3) Crash in augmentation.py
+There are two variable that seem to work with real life images that respect color and some “spread”? in it , but does not seem to work with images we have. These are “hue” and “solarize”. I disabled them in augmentation.py 
+4) FSDP COMPATIBILITY & SAFETY
+Current FDSP implementation does not like new Torch version and seems to be suing some custom handles. Suggestion from the internet: disable it and for sort time running should be no difference , for lont time running on many gpus it seems to be a good idea to revisit it and make it in line with new Torch version (TODO). Bottom line : this is training speed optimization and not a model correctness as I understand it
+TO properly disable it some changes are made to __init__.py in fsdp and in train/ssl_meta_arch.py
+specifically in ssl_meta_arch.py it required change to update_teacher function to properly keep track of parameters of the model, that is the only place there this whole change can affect training. I wold double check it after running (TODO)
+D) Runnig
+I got runscript_cvn.sh script to run training. The script has some adjustment to make sure it does not blow the memory on WCWC. current version for 3 minutes of running was doing fine with approximately 10Gb reserved on our to GPUs
+
+

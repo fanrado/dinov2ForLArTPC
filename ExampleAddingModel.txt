@@ -1,0 +1,10 @@
+Model live in dinov2/models/
+
+one can add any model technically matching expected vectors coming from ViT for DINO student teacher
+
+you later hardcode your model in __init__.py so run command knows how it is called and reads proper configurations for it
+
+As example I got Unet encoder+decoder with "out_stride" varaible that constrols the dimension of output, basically if it 1 it is per pixel feature map or out_stride x out_stride patch . It has to be 1,2,4,8,16 to match what iBOT expects or staff breacks (it might be broken in terms of training anyway, but that requires actual testing)
+
+
+Another interesting feature is again interaction with FDSP in dinov2. Turns out it does not like Batchnorm layers used in Unet. I suspect because they can leave on different GPUs? In any case unet has to have groupnorm layers instead which is currently implemented. However, we can do more work and trully disbling FDSP...(TODO?)

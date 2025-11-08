@@ -2,6 +2,7 @@ import os, zlib, numpy as np
 from glob import glob
 from PIL import Image
 from torch.utils.data import Dataset
+import sys
 
 class CVNDataset(Dataset):
     """
@@ -46,15 +47,36 @@ class CVNDataset(Dataset):
         # -------------------------------
         # Index all available events
         # -------------------------------
-        cand_flavs = ["nue", "numu", "NC", "nutau", "nuecc", "numucc", "nutaucc"]
+        # cand_flavs = ["nue", "numu", "NC", "nutau", "nuecc", "numucc", "nutaucc"]
+        # self.entries = []
+        # for flav in cand_flavs:
+        #     d = os.path.join(root, flav)
+        #     if not os.path.isdir(d):
+        #         continue
+        #     for gz in sorted(glob(os.path.join(d, "event*.gz"))):
+        #         key = os.path.splitext(os.path.basename(gz))[0].replace("event", "")
+        #         self.entries.append((flav, key, gz))
+        cand_flavs = ["nu", "nue", "nutau"]
         self.entries = []
         for flav in cand_flavs:
-            d = os.path.join(root, flav)
+            folder_name = f'prodgenie_dunevd_1x8x6_{flav}/cvn_gaushit'
+            d = os.path.join(root, folder_name)
             if not os.path.isdir(d):
                 continue
-            for gz in sorted(glob(os.path.join(d, "event*.gz"))):
-                key = os.path.splitext(os.path.basename(gz))[0].replace("event", "")
-                self.entries.append((flav, key, gz))
+            for dd in os.listdir(d):
+                subdir = os.path.join(d, dd)
+                if not os.path.isdir(subdir):
+                    continue
+                # print(subdir)
+                for gz in sorted(glob(os.path.join(subdir, "event*.gz"))):
+                    key = os.path.splitext(os.path.basename(gz))[0].replace("event", "")
+                    self.entries.append((flav, key, gz))
+        # print("=============================== LENGTH OF DATASET : -------========" )
+        # print(len(self.entries))
+        # print(self.entries[0])
+        # print('================================')
+        # print('================================')
+        # sys.exit()
 
         if not self.entries:
             raise RuntimeError(f"No .gz files found under {root}/<flavor>/event*.gz")

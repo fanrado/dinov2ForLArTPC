@@ -5,7 +5,7 @@
 
 from functools import partial
 import logging
-
+import sys
 import torch
 from torch import nn
 
@@ -18,6 +18,8 @@ from dinov2.fsdp import get_fsdp_wrapper, ShardedGradScaler, get_fsdp_modules, r
 
 from dinov2.models.vision_transformer import BlockChunk
 
+
+import matplotlib.pyplot as plt
 
 try:
     from xformers.ops import fmha
@@ -130,11 +132,29 @@ class SSLMetaArch(nn.Module):
             loss.backward()
 
     def forward_backward(self, images, teacher_temp):
+        print(f'In forward_backward ...')
+        # print(f'Images loaded : {images.keys()}')
+        # print('----- Looking at global crops -----')
         n_global_crops = 2
         assert n_global_crops == 2
         n_local_crops = self.cfg.crops.local_crops_number
 
         global_crops = images["collated_global_crops"].cuda(non_blocking=True)
+        # print(f'Global crops shape: {global_crops.shape}')
+        # print(f'Example of global crop pixel values: {global_crops[0,:,:]}')
+        # example_global_crop = global_crops[3, :, :].cpu().numpy()
+        # print(f'Example global crop numpy shape: {example_global_crop.shape}')
+        # fig, ax = plt.subplots(1,3,figsize=(12,4))
+        # ax[0].imshow(example_global_crop[0,:,:], cmap='viridis')
+        # ax[0].set_title('Global Crop - Channel 0')
+        # ax[1].imshow(example_global_crop[1,:,:], cmap='viridis')
+        # ax[1].set_title('Global Crop - Channel 1')
+        # ax[2].imshow(example_global_crop[2,:,:], cmap='viridis')
+        # ax[2].set_title('Global Crop - Channel 2')
+        # plt.tight_layout()
+        # plt.savefig('/nfs/data/1/rrazakami/work/dinov2ForLArTPC/tests/imagesDINO/global_crop_example.png')
+        # plt.close(fig)
+        # sys.exit()
         local_crops = images["collated_local_crops"].cuda(non_blocking=True)
 
         masks = images["collated_masks"].cuda(non_blocking=True)
@@ -156,8 +176,32 @@ class SSLMetaArch(nn.Module):
         # teacher output
         @torch.no_grad()
         def get_teacher_output():
+            # print('---------Get teacher output ------')
             x, n_global_crops_teacher = global_crops, n_global_crops
+            # print('---------Get teacher output ------')
+            # print(f'Global crops shape : {x.shape} ::::: Global crops;----; Global crops number: {n_global_crops_teacher}')
+            # sys.exit()
             teacher_backbone_output_dict = self.teacher.backbone(x, is_training=True)
+            ########## DEBUGGING OUTPUTS ############
+            # print(f'Teacher backbone output keys: {teacher_backbone_output_dict.keys()}')
+            # print(f'Teacher backbone output cls token shape: {teacher_backbone_output_dict["x_norm_clstoken"].shape}')
+            # print(f'Teacher backbone output patch token shape: {teacher_backbone_output_dict["x_norm_patchtokens"].shape}')
+            # print(f'Teacher backbone x prenorm shape: {teacher_backbone_output_dict["x_prenorm"].shape}')
+            # print(f'Teacher backbone masks: {teacher_backbone_output_dict["masks"]}')
+            # print(f'Teacher backbone output patch token example : {teacher_backbone_output_dict["x_norm_patchtokens"][:, 0]}')
+            # tokens = teacher_backbone_output_dict["x_norm_patchtokens"]
+            # batch_size = tokens.shape[0]
+            # tokens_spatial = tokens.reshape(batch_size, 14,14, 1024)
+            # fig, axes = plt.subplots(2,4,figsize=(16,8))
+            # for i, ax in enumerate(axes.flat):
+            #     ax.imshow(tokens_spatial[0, :, :, i].cpu().numpy(), cmap='viridis')
+            #     ax.set_title(f'Channel {i}')
+            #     ax.axis('off')
+            # plt.tight_layout()
+            # plt.savefig('/nfs/data/1/rrazakami/work/dinov2ForLArTPC/tests/imagesDINO/teacher_patch_tokens_example.png')
+            # plt.close(fig)
+            # sys.exit()
+            ########## ######## ############
             teacher_cls_tokens = teacher_backbone_output_dict["x_norm_clstoken"]
             teacher_cls_tokens = teacher_cls_tokens.chunk(n_global_crops_teacher)
             # watch out: these are chunked and cat'd in reverse so A is matched to B in the global crops dino loss
@@ -223,7 +267,7 @@ class SSLMetaArch(nn.Module):
 
             else:
                 raise NotImplementedError
-
+            # print('---------Get teacher output done ------')
             return teacher_dino_softmaxed_centered_list, masked_teacher_ibot_softmaxed_centered
 
         teacher_dino_softmaxed_centered_list, masked_teacher_ibot_softmaxed_centered = get_teacher_output()
@@ -245,7 +289,7 @@ class SSLMetaArch(nn.Module):
         # 1b: global crops cls tokens
         student_global_cls_tokens = student_global_backbone_output_dict["x_norm_clstoken"]
         inputs_for_student_head_list.append(student_global_cls_tokens.unsqueeze(0))
-
+        print(f'Student global cls tokens shape: {student_global_cls_tokens.shape}')
         # 1c: global crops patch tokens
         if do_ibot:
             _dim = student_global_backbone_output_dict["x_norm_clstoken"].shape[-1]
@@ -260,7 +304,7 @@ class SSLMetaArch(nn.Module):
                 student_global_masked_patch_tokens_after_head = self.student.ibot_head(buffer_tensor_patch_tokens)[
                     :n_masked_patches
                 ]
-
+        # print('---------Student backbone forward done ------')
         # 2: run
         _attn_bias, cat_inputs = fmha.BlockDiagonalMask.from_tensor_list(inputs_for_student_head_list)
         outputs_list = _attn_bias.split(self.student.dino_head(cat_inputs))
@@ -318,7 +362,7 @@ class SSLMetaArch(nn.Module):
                 loss_dict["koleo_loss"] = (
                     koleo_loss / loss_scales
                 )  # this is to display the same losses as before but we can remove eventually
-
+        # print('---------Loss computation done ------')
         if do_ibot:
             # compute loss
             ibot_patch_loss = (
@@ -342,7 +386,8 @@ class SSLMetaArch(nn.Module):
         self.backprop_loss(loss_accumulator)
 
         self.fsdp_synchronize_streams()
-
+        # print(f'---------forward_backward done ------')
+        # sys.exit()
         return loss_dict
 
 

@@ -22,6 +22,9 @@ from dinov2.utils.utils import CosineScheduler
 
 from dinov2.train.ssl_meta_arch import SSLMetaArch
 
+#  from torch.utils.tensorboard import SummaryWriter
+from dinov2.train.grad_monitor import GradMonitor
+from dinov2.train.grad_monitor_fsdp import GradMonitorFSDP
 
 torch.backends.cuda.matmul.allow_tf32 = True  # PyTorch 1.12 sets this to False by default
 logger = logging.getLogger("dinov2")
@@ -131,7 +134,7 @@ def do_test(cfg, model, iteration):
         torch.save({"teacher": new_state_dict}, teacher_ckp_path)
 
 
-def do_train(cfg, model, resume=False):
+def do_train(cfg, model, resume=False, grad_monitor=None, writer=None):
     model.train()
     inputs_dtype = torch.half
     fp16_scaler = model.fp16_scaler  # for mixed precision training
@@ -244,6 +247,7 @@ def do_train(cfg, model, resume=False):
         optimizer.zero_grad(set_to_none=True)
         loss_dict = model.forward_backward(data, teacher_temp=teacher_temp)
 
+        grad_monitor.record(model.student["backbone"], step=iteration)
         # clip gradients
 
         if fp16_scaler is not None:
@@ -251,12 +255,29 @@ def do_train(cfg, model, resume=False):
                 fp16_scaler.unscale_(optimizer)
                 for v in model.student.values():
                     v.clip_grad_norm_(cfg.optim.clip_grad)
+
+            # Log gradient norms
+            if grad_monitor and iteration % 100 == 0:
+                grad_stats = grad_monitor.get_latest()
+                print(f"[step {iteration}] gradient norms: ", len(grad_stats))
+                for name, value in grad_stats.items():
+                    print(name, value)
+                    #  print(f"  {name}: {value:.4e}")
+
             fp16_scaler.step(optimizer)
             fp16_scaler.update()
         else:
             if cfg.optim.clip_grad:
                 for v in model.student.values():
                     v.clip_grad_norm_(cfg.optim.clip_grad)
+
+            if grad_monitor and iteration % 100 == 0:
+                grad_stats = grad_monitor.get_latest()
+                print(f"[step {iteration}] gradient norms: ", len(grad_stats))
+                for name, value in grad_stats.items():
+                    print(name, value)
+                    #  print(f"  {name}: {value:.4e}")
+
             optimizer.step()
 
         # perform teacher EMA update
@@ -289,6 +310,10 @@ def do_train(cfg, model, resume=False):
             torch.cuda.synchronize()
         periodic_checkpointer.step(iteration)
 
+        if grad_monitor and iteration % 1000 == 0:
+            epoch = iteration // 1000
+            grad_monitor.save_json(f"{cfg.train.output_dir}/grads/grad_history_epoch{epoch:04d}.json")
+
         iteration = iteration + 1
     metric_logger.synchronize_between_processes()
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
@@ -297,8 +322,27 @@ def do_train(cfg, model, resume=False):
 def main(args):
     cfg = setup(args)
 
+    #  writer = SummaryWriter(log_dir=cfg.train.output_dir)
+    #
+    grad_monitor = GradMonitorFSDP(
+        patterns=[
+            r"patch_embed",      # early conv / patch proj
+            r"pos_embed",        # positional encoding
+            r"cls_token",        # global token
+            r"blocks\.0\._fsdp_wrapped_module\.([0-9]+)\.attn",  # first block's attention
+            r"blocks\.([0-9]+)\._fsdp_wrapped_module\.23\.attn",  # last block's attention
+        ],
+        max_points = 10000
+    )
+
     model = SSLMetaArch(cfg).to(torch.device("cuda"))
     model.prepare_for_distributed_training()
+    #  grad_monitor.attach(model.student["backbone"])
+    #  print("DEBUG ::: ")
+    #  print(list(model.student.keys()))
+    #  for name, param in model.student["backbone"].named_parameters():
+    #      print("Has name, grad : ", name, param.requires_grad)
+    #  print("DEBUG ::: ")
 
     logger.info("Model:\n{}".format(model))
     if args.eval_only:
@@ -310,7 +354,7 @@ def main(args):
         )
         return do_test(cfg, model, f"manual_{iteration}")
 
-    do_train(cfg, model, resume=not args.no_resume)
+    do_train(cfg, model, resume=not args.no_resume, grad_monitor=grad_monitor)
 
 
 if __name__ == "__main__":

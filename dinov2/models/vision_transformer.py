@@ -231,12 +231,12 @@ class DinoVisionTransformer(nn.Module):
             )
 
         return x
-
+ 
     def forward_features_list(self, x_list, masks_list):
         x = [self.prepare_tokens_with_masks(x, masks) for x, masks in zip(x_list, masks_list)]
         for blk in self.blocks:
             x = blk(x)
-
+        
         all_x = x
         output = []
         for x, masks in zip(all_x, masks_list):
@@ -269,6 +269,22 @@ class DinoVisionTransformer(nn.Module):
             "x_prenorm": x,
             "masks": masks,
         }
+    
+    ### Function from dinov1
+    def get_last_self_attention(self, x, masks=None):
+        # if isinstance(x, list):
+        #     return self.forward_features_list(x, masks)
+            
+        x = self.prepare_tokens_with_masks(x, masks)
+        ## Implementation/Suggestion to get the attention map
+        # Run through model, at the last block just return the attention.
+        print(f'len blocks: {len(self.blocks)}')
+        for i, blk in enumerate(self.blocks):
+            if i < len(self.blocks) - 1:
+                x = blk(x)
+            else: 
+                # print('Returning attention from the last block')
+                return blk(x, return_attention=True)
 
     def _get_intermediate_layers_not_chunked(self, x, n=1):
         x = self.prepare_tokens_with_masks(x)

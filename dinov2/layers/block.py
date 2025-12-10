@@ -25,6 +25,7 @@ logger = logging.getLogger("dinov2")
 
 
 XFORMERS_ENABLED = os.environ.get("XFORMERS_DISABLED") is None
+XFORMERS_ENABLED = False
 try:
     if XFORMERS_ENABLED:
         from xformers.ops import fmha, scaled_index_add, index_select_cat
@@ -86,13 +87,18 @@ class Block(nn.Module):
 
         self.sample_drop_ratio = drop_path
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor, return_attention=False) -> Tensor:
         def attn_residual_func(x: Tensor) -> Tensor:
             return self.ls1(self.attn(self.norm1(x)))
 
         def ffn_residual_func(x: Tensor) -> Tensor:
             return self.ls2(self.mlp(self.norm2(x)))
-
+        
+        ## Implementation/Suggestion to get the attention map
+        # Add this 2 lines
+        if return_attention:
+            return self.attn(self.norm1(x), return_attn=True)
+        
         if self.training and self.sample_drop_ratio > 0.1:
             # the overhead is compensated only for a drop path rate larger than 0.1
             x = drop_add_residual_stochastic_depth(
@@ -305,9 +311,11 @@ class NestedTensorBlock(Block):
             x = x + ffn_residual_func(x)
             return attn_bias.split(x)
 
-    def forward(self, x_or_x_list):
+    def forward(self, x_or_x_list, return_attention=False):
         if isinstance(x_or_x_list, Tensor):
-            return super().forward(x_or_x_list)
+            ## Change to get the attention
+            # return super().forward(x_or_x_list)
+            return super().forward(x_or_x_list, return_attention)
         elif isinstance(x_or_x_list, list):
             if not XFORMERS_AVAILABLE:
                 raise AssertionError("xFormers is required for using nested tensors")

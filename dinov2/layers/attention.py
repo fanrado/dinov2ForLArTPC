@@ -19,6 +19,8 @@ logger = logging.getLogger("dinov2")
 
 
 XFORMERS_ENABLED = os.environ.get("XFORMERS_DISABLED") is None
+XFORMERS_ENABLED = False
+print('XFORMERS_ENABLED=', XFORMERS_ENABLED)
 try:
     if XFORMERS_ENABLED:
         from xformers.ops import memory_efficient_attention, unbind
@@ -50,7 +52,9 @@ class Attention(nn.Module):
         self.scale = head_dim**-0.5
 
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
-        self.attn_drop = attn_drop
+        # self.attn_drop = attn_drop
+        self.attn_drop = nn.Dropout(attn_drop) ## self.attn_drop was a float before but attn = self.attn_drop(attn) needs a nn.Dropout
+        self.attn_drop_float = attn_drop ## keep the float version for nn.functional.scaled_dot_product_attention
         self.proj = nn.Linear(dim, dim, bias=proj_bias)
         self.proj_drop = nn.Dropout(proj_drop)
 
@@ -66,31 +70,47 @@ class Attention(nn.Module):
         if self.proj.bias is not None:
             nn.init.zeros_(self.proj.bias)
 
-    def forward(self, x: Tensor, is_causal: bool = False) -> Tensor:
+    def forward(self, x: Tensor, is_causal: bool = False, return_attn=False) -> Tensor:
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads)
         q, k, v = torch.unbind(qkv, 2)
         q, k, v = [t.transpose(1, 2) for t in [q, k, v]]
+        # x = nn.functional.scaled_dot_product_attention(
+        #     q, k, v, attn_mask=None, dropout_p=self.attn_drop if self.training else 0, is_causal=is_causal
+        # )
         x = nn.functional.scaled_dot_product_attention(
-            q, k, v, attn_mask=None, dropout_p=self.attn_drop if self.training else 0, is_causal=is_causal
+            q, k, v, attn_mask=None, dropout_p=self.attn_drop_float if self.training else 0, is_causal=is_causal
         )
-        x = x.transpose(1, 2).contiguous().view(B, N, C)
+        # q, k, v = qkv[0] * self.scale, qkv[1], qkv[2]
+        attn = q @ k.transpose(-2, -1)
+
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        # x = x.transpose(1, 2).contiguous().view(B, N, C)
         x = self.proj_drop(self.proj(x))
+
+        # Add those 2 lines
+        if return_attn:
+            return attn
         return x
 
 
 class MemEffAttention(Attention):
-    def forward(self, x: Tensor, attn_bias=None) -> Tensor:
+    def forward(self, x: Tensor, attn_bias=None, return_attn=False) -> Tensor:
+        # return super().forward(x=x, return_attn=return_attn)
         if not XFORMERS_AVAILABLE:
             if attn_bias is not None:
                 raise AssertionError("xFormers is required for using nested tensors")
-            return super().forward(x)
+            # return super().forward(x)
+            return super().forward(x=x, return_attn=return_attn)
 
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads)
-
+ 
         q, k, v = unbind(qkv, 2)
-
+ 
         x = memory_efficient_attention(q, k, v, attn_bias=attn_bias)
         x = x.reshape([B, N, C])
 

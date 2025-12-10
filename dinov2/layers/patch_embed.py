@@ -66,6 +66,7 @@ class PatchEmbed(nn.Module):
         self.norm = norm_layer(embed_dim) if norm_layer else nn.Identity()
 
     def forward(self, x: Tensor) -> Tensor:
+        x = x.to(self.proj.weight.device) ## ensure input is on same device as model
         _, _, H, W = x.shape
         patch_H, patch_W = self.patch_size
 

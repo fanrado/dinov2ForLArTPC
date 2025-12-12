@@ -34,9 +34,14 @@ def named_apply(fn: Callable, module: nn.Module, name="", depth_first=True, incl
         fn(module=module, name=name)
     return module
 
-
 class BlockChunk(nn.ModuleList):
-    def forward(self, x):
+    def forward(self, x, return_attention=True):
+        if return_attention:
+            for i, b in enumerate(self):
+                if i < len(self) - 1:
+                    x = b(x)
+                else:
+                    return b(x, return_attention=True)
         for b in self:
             x = b(x)
         return x

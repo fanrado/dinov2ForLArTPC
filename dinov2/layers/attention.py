@@ -53,8 +53,10 @@ class Attention(nn.Module):
 
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
         # self.attn_drop = attn_drop
-        self.attn_drop = nn.Dropout(attn_drop) ## self.attn_drop was a float before but attn = self.attn_drop(attn) needs a nn.Dropout
-        self.attn_drop_float = attn_drop ## keep the float version for nn.functional.scaled_dot_product_attention
+        self.attn_drop = nn.Dropout(attn_drop) ## self.attn_drop was a float before 
+                                                ## but attn = self.attn_drop(attn) needs a nn.Dropout
+        self.attn_drop_float = attn_drop ## keep the float version
+                                        ## for nn.functional.scaled_dot_product_attention   
         self.proj = nn.Linear(dim, dim, bias=proj_bias)
         self.proj_drop = nn.Dropout(proj_drop)
 
@@ -75,20 +77,16 @@ class Attention(nn.Module):
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads)
         q, k, v = torch.unbind(qkv, 2)
         q, k, v = [t.transpose(1, 2) for t in [q, k, v]]
-        # x = nn.functional.scaled_dot_product_attention(
-        #     q, k, v, attn_mask=None, dropout_p=self.attn_drop if self.training else 0, is_causal=is_causal
-        # )
         x = nn.functional.scaled_dot_product_attention(
             q, k, v, attn_mask=None, dropout_p=self.attn_drop_float if self.training else 0, is_causal=is_causal
         )
-        # q, k, v = qkv[0] * self.scale, qkv[1], qkv[2]
         attn = q @ k.transpose(-2, -1)
 
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
 
-        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
-        # x = x.transpose(1, 2).contiguous().view(B, N, C)
+        # x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = x.transpose(1, 2).contiguous().view(B, N, C)
         x = self.proj_drop(self.proj(x))
 
         # Add those 2 lines

@@ -103,7 +103,7 @@ def display_instances(image, mask, fname="test", figsize=(5, 5), blur=False, con
 
 if __name__ == '__main__':
     # image_size = (952, 952)
-    image_size = (480, 480)
+    # image_size = (480, 480)
     # image_size = (224, 224)
     output_dir = 'attn/'
     patch_size = 14
@@ -126,7 +126,9 @@ if __name__ == '__main__':
     # url = "dino_deitsmall8_300ep_pretrain/dino_deitsmall8_300ep_pretrain.pth"
     # state_dict = torch.hub.load_state_dict_from_url(url="https://dl.fbaipublicfiles.com/dino/" + url)
     # model.load_state_dict(state_dict, strict=True)
-    model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitg14')
+    # model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitg14')
+    dinov2_vitl14_lc = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitl14_lc')
+    model.load_state_dict(dinov2_vitl14_lc.state_dict(), strict=False)
     print('Model loaded from transformers', model)
     # sys.exit()
     # for p in model.parameters():
@@ -135,7 +137,7 @@ if __name__ == '__main__':
     # model.eval()
     # model.to(device)
     print('HERE')
-    img = Image.open('cow-beach.jpg')
+    img = Image.open('image.png')
     print(f'image size: {img.size}')
     img0 = img.convert('RGB')
     transform = pth_transforms.Compose([
@@ -172,7 +174,7 @@ if __name__ == '__main__':
     attentions = attentions[0, :, 0, 1:].reshape(nh, -1)
 
     ## apply mask
-    threshold = 0.6
+    threshold = 0.3
     if threshold is not None:
         # we keep only a certain percentage of the mass
         val, idx = torch.sort(attentions)
@@ -206,7 +208,7 @@ if __name__ == '__main__':
         print(f"{fname} saved.")
 
     if threshold is not None:
-        image = skimage.io.imread(os.path.join('.', "cow-beach.jpg"))
+        image = skimage.io.imread(os.path.join('.', "image.png"))
         print(f'Image shape : {image.shape}')
         image = np.asarray(image)
         print(f'Image shape after skimage.io.imread : {image.shape}')

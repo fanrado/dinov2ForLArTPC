@@ -35,17 +35,20 @@ import numpy as np
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModel, AutoConfig
 sys.path.append('../')
-from dinov2.models.vision_transformer import vit_small, vit_large
+from dinov2.models.vision_transformer import vit_small, vit_large, vit_giant2
 
 def apply_mask(image, mask, color, alpha=0.5):
-    print('Applying mask to the image')
+    new_image = image.copy()
+    # if image.shape[0] == 3:
+        
+    # print('Applying mask to the image')
     for c in range(3):
-        print(f'Image shape : {image.shape}')
+        print(f'Image shape : {new_image.shape}')
         print(f'Mask shape : {mask.shape}')
         print(f'Color : {color[c]}')
         print(f'alpha : {alpha}')
-        image[:, :, c] = image[:, :, c] * (1 - alpha * mask) + alpha * mask * color[c] * 255
-    return image
+        new_image[:, :, c] = new_image[:, :, c] * (1 - alpha * mask) + alpha * mask * color[c] * 255
+    return new_image
 
 
 def random_colors(N, bright=True):
@@ -102,7 +105,7 @@ def display_instances(image, mask, fname="test", figsize=(5, 5), blur=False, con
     return
 
 if __name__ == '__main__':
-    # image_size = (952, 952)
+    image_size = (518, 518)
     # image_size = (480, 480)
     # image_size = (224, 224)
     output_dir = 'attn/'
@@ -110,13 +113,20 @@ if __name__ == '__main__':
 
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
-    model = vit_large(
+    model = vit_giant2(
             patch_size=14,
-            # img_size=224,
-            init_values=1.0,
+            img_size=518,
+            # init_values=1.0,
             #ffn_layer="mlp",
-            block_chunks=0
+            # block_chunks=1
     )
+    # model = vit_large(
+    #         patch_size=14,
+    #         # img_size=518,
+    #         # init_values=1.0,
+    #         #ffn_layer="mlp",
+    #         # block_chunks=1
+    # )
     # model = vit_large(patch_size=14)
     model.to(device)
     for p in model.parameters():
@@ -126,9 +136,15 @@ if __name__ == '__main__':
     # url = "dino_deitsmall8_300ep_pretrain/dino_deitsmall8_300ep_pretrain.pth"
     # state_dict = torch.hub.load_state_dict_from_url(url="https://dl.fbaipublicfiles.com/dino/" + url)
     # model.load_state_dict(state_dict, strict=True)
-    # model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitg14')
-    dinov2_vitl14_lc = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitl14_lc')
-    model.load_state_dict(dinov2_vitl14_lc.state_dict(), strict=False)
+    # model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitl14')
+    # dinov2_vitl14_lc = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitl14_lc')
+    # model.load_state_dict(dinov2_vitl14_lc.state_dict(), strict=False)
+    pth_model = torch.load('dinov2_vitg14_pretrain.pth')
+    print('\n')
+    print('Model loaded from pth file', pth_model['pos_embed'].shape)
+    print('Model pos_embed shape in model:', model.pos_embed.shape)
+    model.load_state_dict(pth_model, strict=False)
+
     print('Model loaded from transformers', model)
     # sys.exit()
     # for p in model.parameters():
@@ -140,8 +156,9 @@ if __name__ == '__main__':
     img = Image.open('image.png')
     print(f'image size: {img.size}')
     img0 = img.convert('RGB')
+    print(f'Converted image size: {img0.size}')
     transform = pth_transforms.Compose([
-        # pth_transforms.Resize(image_size),
+        pth_transforms.Resize(image_size),
         pth_transforms.ToTensor(),
         pth_transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     ])
@@ -153,7 +170,7 @@ if __name__ == '__main__':
     print(f'cropped size: {(w, h)}')
 
     img = img[:, :w, :h].unsqueeze(0)
-    print(f'final image size: {img.shape}')
+
     # sys.exit()
     w_featmap = img.shape[-2] // patch_size
     h_featmap = img.shape[-1] // patch_size
@@ -214,10 +231,13 @@ if __name__ == '__main__':
         print(f'Image shape after skimage.io.imread : {image.shape}')
 
         # make the image divisible by the patch size
-        w, h = image.shape[0] - image.shape[0] % patch_size, image.shape[1] - image.shape[1] % patch_size
+        image = skimage.transform.resize(image, image_size + (image.shape[2],), anti_aliasing=True, preserve_range=True).astype(np.uint8)
+        # w, h = image.shape[0] - image.shape[0] % patch_size, image.shape[1] - image.shape[1] % patch_size
+        w, h = image_size[0] - image_size[0] % patch_size, image_size[1] - image_size[1] % patch_size
         print(f'cropped size: {(w, h)}')
 
         image = image[:w, :h, :]
+        
         for j in range(nh):
             display_instances(image, th_attn[j], fname=os.path.join(output_dir, "mask_th" + str(threshold) + "_head" + str(j) +".jpg"), blur=False)
 

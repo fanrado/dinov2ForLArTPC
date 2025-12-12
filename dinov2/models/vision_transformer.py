@@ -272,8 +272,8 @@ class DinoVisionTransformer(nn.Module):
     
     ### Function from dinov1
     def get_last_self_attention(self, x, masks=None):
-        # if isinstance(x, list):
-        #     return self.forward_features_list(x, masks)
+        if isinstance(x, list):
+            return self.forward_features_list(x, masks)
             
         x = self.prepare_tokens_with_masks(x, masks)
         ## Implementation/Suggestion to get the attention map
@@ -282,8 +282,10 @@ class DinoVisionTransformer(nn.Module):
         for i, blk in enumerate(self.blocks):
             if i < len(self.blocks) - 1:
                 x = blk(x)
+                x = self.norm(x)
             else: 
                 # print('Returning attention from the last block')
+                x = self.norm(x)
                 return blk(x, return_attention=True)
 
     def _get_intermediate_layers_not_chunked(self, x, n=1):

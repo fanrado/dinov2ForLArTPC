@@ -39,8 +39,7 @@ from transformers import AutoImageProcessor, AutoModel, AutoConfig
 sys.path.append('../')
 from dinov2.models.vision_transformer import vit_small, vit_large, vit_giant2
 
-from fvcore.common.checkpoint import Checkpointer
-
+from matplotlib.patches import FancyArrowPatch
 def apply_mask(image, mask, color, alpha=0.5):
     new_image = image.copy()
     # if image.shape[0] == 3:
@@ -135,15 +134,16 @@ def _read_array(gz_path, swap_axes=False, plane='Z'):
 #         event = _read_array(gz_path=path_to_file)
 #         plt.imsave(fname='events_cvn/'+f.replace('.gz', '.png'), arr=np.moveaxis(event, 0, -1), format='png')
 # sys.exit()
-path_to_gz = '/nfs/data/1/rrazakami/work/data_cvn/data/dune/2023_trainings/latest/dunevd/prodgenie_dunevd_1x8x6_nue/cvn_gaushit/72787986_732/event_r933_s1_e31742_h1695836876.gz'
+path_to_gz = '/nfs/data/1/rrazakami/work/data_cvn/data/dune/2023_trainings/latest/dunevd/prodgenie_dunevd_1x8x6_nue/cvn_gaushit/72787986_732/event_r943_s1_e20520_h1695837055.gz'
 event = _read_array(gz_path=path_to_gz)
 if __name__ == '__main__':
     # image_size = (518, 518)
-    image_size = (500, 500)
+    # image_size = (500, 500)
     # image_size = (480, 480)
-    # image_size = (224, 224)
+    image_size = (384, 384)
+    # image_size = (350, 350)
     output_dir = 'attn/'
-    patch_size = 16
+    patch_size = 4
 
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     # dist.init_process_group(backend='gloo', init_method='env://', master_addr='localhost', master_port='12355', rank=0, world_size=1)
@@ -161,7 +161,7 @@ if __name__ == '__main__':
     #         #ffn_layer="mlp",
     #         # block_chunks=1
     # )
-    model = vit_large(patch_size=16, img_size=image_size[0])
+    model = vit_large(patch_size=patch_size, img_size=image_size[0])
     model.to(device)
     for p in model.parameters():
         p.requires_grad = False
@@ -178,36 +178,23 @@ if __name__ == '__main__':
     # pth_model = torch.load('dinov2_vitg14_pretrain.pth')
     ### ---
     ## Load a model from a training checkpoint. Training from scratch using cvn dataset
-    pth_model = torch.load('../out_cvn_memlite_batchpergpu_16/model_final.rank_0.pth')
+    # pth_model = torch.load('../out_cvn_memlite_batchpergpu_16/model_final.rank_0.pth')
+    pth_model = torch.load('../out_cvn_memlite/model_final.rank_0.pth')
     model.load_state_dict(pth_model, strict=False)
     ## -----------------
     # pth_model = torch.load('/nfs/data/1/nitish/dino_output/small_run1_basemask/model_final.rank_0.pth',)
     # #                        map_location='cpu', weights_only=True)
-    # print(pth_model)
-
-    # pth_model = torch.load('model_final.rank_0.pth')
-    print('\n')
-    # print('Model loaded from pth file', pth_model['pos_embed'].shape)
-    # print('Model pos_embed shape in model:', model.pos_embed.shape)
-    # sys.exit()
-    
 
     print('Model loaded from transformers', model)
-    # sys.exit()
-    # for p in model.parameters():
-    #     p.requires_grad = False
-    
-    # model.eval()
-    # model.to(device)
-    print('HERE')
+
     ## LINES TO OPEN DENSE IMAGES -----------
-    # img = Image.open('image.png')
+    img = Image.open('image.png')
     # img = Image.open('cow-beach.jpg')
-    # print(f'image size: {img.size}')
-    # img0 = img.convert('RGB')
+    print(f'image size: {img.size}')
+    img0 = img.convert('RGB')
     #
     ## FOR LArTPC EVENTS -------------
-    img0 = event
+    # img0 = event
     ## ---------------------------------
     print(f'Converted image size: {img0.size}')
     transform = pth_transforms.Compose([
@@ -241,7 +228,14 @@ if __name__ == '__main__':
     # for every patch
     print(f'attention shape : {attentions.shape}, {nh}')
     
+    ## what the cls token is looking at in the input image
     attentions = attentions[0, :, 0, 1:].reshape(nh, -1)
+    ##
+    ## specific pixel perspective
+    # pixel_row = 15
+    # pixel_col = 15
+    # pixel_index = pixel_row * h_featmap + pixel_col + 1  # +1 to skip cls token
+    # attentions = attentions[0, :, pixel_index, 1:].reshape(nh, -1)
     # print(f'Attention after reshape: {attentions.shape}')
     # sys.exit()
 
@@ -265,7 +259,7 @@ if __name__ == '__main__':
     print(attentions.shape)
     # weird: one pixel gets high attention over all heads?
     print(torch.max(attentions, dim=1)) 
-    attentions[:, 283] = 0 
+    # attentions[:, 283] = 0 
 
     ##
     attentions = attentions.reshape(nh, w_featmap, h_featmap)
@@ -282,8 +276,9 @@ if __name__ == '__main__':
         print(f"{fname} saved.")
 
     if threshold is not None:
-        image = skimage.io.imread(os.path.join('.', "image.png"))
-        print(f'Image shape : {image.shape}')
+        # image = skimage.io.imread(os.path.join('.', "image.png"))
+        # print(f'Image shape : {image.shape}')
+        image = event
         image = np.asarray(image)
         print(f'Image shape after skimage.io.imread : {image.shape}')
 

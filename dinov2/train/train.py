@@ -6,7 +6,7 @@
 import argparse
 import logging
 import math
-import os
+import os, sys, json
 from functools import partial
 
 from fvcore.common.checkpoint import PeriodicCheckpointer
@@ -130,8 +130,12 @@ def do_test(cfg, model, iteration):
         teacher_ckp_path = os.path.join(eval_dir, "teacher_checkpoint.pth")
         torch.save({"teacher": new_state_dict}, teacher_ckp_path)
 
-
+import time
 def do_train(cfg, model, resume=False):
+    torch.cuda.synchronize()
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
+    start_time = time.time()
     model.train()
     inputs_dtype = torch.half
     fp16_scaler = model.fp16_scaler  # for mixed precision training
@@ -157,9 +161,10 @@ def do_train(cfg, model, resume=False):
 
     periodic_checkpointer = PeriodicCheckpointer(
         checkpointer,
+        # period=3 * OFFICIAL_EPOCH_LENGTH,
         period=3 * OFFICIAL_EPOCH_LENGTH,
         max_iter=max_iter,
-        max_to_keep=3,
+        max_to_keep=2,
     )
 
     # setup data preprocessing
@@ -180,6 +185,8 @@ def do_train(cfg, model, resume=False):
         local_crops_size=cfg.crops.local_crops_size,
     )
 
+    print(f'Data transform: {data_transform}')
+    
     collate_fn = partial(
         collate_data_and_cast,
         mask_ratio_tuple=cfg.ibot.mask_ratio_min_max,
@@ -196,6 +203,12 @@ def do_train(cfg, model, resume=False):
         transform=data_transform,
         target_transform=lambda _: (),
     )
+
+    print('============== DATASET ==============')
+    print(dataset.root)
+    print(dataset.entries[:5])
+    print('Dataset OK ... They are loaded up to here.')
+    print('=====================================')
     # sampler_type = SamplerType.INFINITE
     sampler_type = SamplerType.SHARDED_INFINITE
     data_loader = make_data_loader(
@@ -219,14 +232,32 @@ def do_train(cfg, model, resume=False):
     metric_logger = MetricLogger(delimiter="  ", output_file=metrics_file)
     header = "Training"
 
+    torch.cuda.synchronize()
+
+    # peak_memory_priorTraining = torch.cuda.max_memory_allocated() / (1024.0 ** 3)  # in GB
+    peak_memory_priorTraining = torch.cuda.max_memory_reserved() / (1024.0 ** 3)  # in GB
+    print(f'Peak memory usage prior to training loop: {peak_memory_priorTraining:.2f} GB')
+
+    peak_memory_dict = {'iteration': [], 'peak_memory_GB': []}
+    runtime_dict = {'iteration': [], 'time_per_iteration_s': []}
+    end_prep_time = time.time()
+
     for data in metric_logger.log_every(
         data_loader,
-        10,
+        # 10,
+        1, # 5
         header,
         max_iter,
         start_iter,
     ):
+        torch.cuda.synchronize()
+        data_time_ = time.time() - end_prep_time
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+        t0 = time.time()
         current_batch_size = data["collated_global_crops"].shape[0] / 2
+        # print(f'Batch size : {current_batch_size}')
+        # continue
         if iteration > max_iter:
             return
 
@@ -238,7 +269,8 @@ def do_train(cfg, model, resume=False):
         teacher_temp = teacher_temp_schedule[iteration]
         last_layer_lr = last_layer_lr_schedule[iteration]
         apply_optim_scheduler(optimizer, lr, wd, last_layer_lr)
-
+        # print(f'Learning rate: {lr:.6f}, Weight decay: {wd:.6f}, Momentum: {mom:.6f}, Teacher temp: {teacher_temp:.6f}, Last layer lr: {last_layer_lr:.6f}')
+        # sys.exit()
         # compute losses
 
         optimizer.zero_grad(set_to_none=True)
@@ -289,17 +321,67 @@ def do_train(cfg, model, resume=False):
             torch.cuda.synchronize()
         periodic_checkpointer.step(iteration)
 
+        # ### get peak memory usage at this stage
+        torch.cuda.synchronize()
+        t1 = time.time() - t0 + data_time_
+
+        # peak_memory = torch.cuda.max_memory_allocated() / (1024.0 ** 3)  # in GB
+        peak_memory = torch.cuda.max_memory_reserved() / (1024.0 ** 3)  # in GB
+        peak_memory_dict['iteration'].append(iteration)
+        peak_memory_dict['peak_memory_GB'].append(peak_memory)
+        runtime_dict['iteration'].append(iteration)
+        runtime_dict['time_per_iteration_s'].append(t1)
+        # # if iteration == 10:
+        # #     break
         iteration = iteration + 1
+        end_prep_time = time.time()
+        # print(f'Model state dict : {model.state_dict()}')
+        # sys.exit()
+        #
+        # # Create a dictionary to store the checkpoint information
+        # checkpoint = {
+        #     'epoch': 1,
+        #     'model_state_dict': model.state_dict(),
+        #     'optimizer_state_dict': optimizer.state_dict(),
+        #     'best_accuracy': lr,
+        # }
+
+        # # Define the path where you want to save the model
+        # save_path = 'tests/retrained_dinov2_model.pth'
+
+        # # Save the checkpoint dictionary to the .pth file
+        # torch.save(checkpoint, save_path)
+        # sys.exit()
+    # sys.exit()
     metric_logger.synchronize_between_processes()
+    ## save peak_memory_dict in a json file
+    eval_mem_runtime = {'runtime' : runtime_dict, 'peak_memory': peak_memory_dict}
+    # peak_memory_file = os.path.join('/nfs/data/1/rrazakami/work/dinov2ForLArTPC/tests/', "peak_memory_usage.json")
+    torch.cuda.synchronize()
+    end_time = time.time()
+    print(f'==================== Total training time of {max_iter-start_iter} iterations: {end_time - start_time:.2f} seconds ====================')
+    eval_mem_runtime['total_training_time_s'] = end_time - start_time
+    eval_file = os.path.join('/nfs/data/1/rrazakami/work/dinov2ForLArTPC/tests/', "eval_mem_runtime.json")
+    with open(eval_file, 'w') as f:
+        json.dump(eval_mem_runtime, f)
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
 def main(args):
     cfg = setup(args)
-
+    
     model = SSLMetaArch(cfg).to(torch.device("cuda"))
     model.prepare_for_distributed_training()
-
+    print(f'Model loading {model}')
+    print('---')
+    print(f'Student model ::: {model.student}')
+    print('---')
+    print(f'Backbone student ::: {model.student.backbone}')
+    print('---')
+    print(f'Patch embed student ::: {model.student.backbone.patch_embed}')
+    print('---')
+    print(f'Image size student ::: {model.student.backbone.patch_embed.img_size}')
+    # sys.exit()
     logger.info("Model:\n{}".format(model))
     if args.eval_only:
         iteration = (

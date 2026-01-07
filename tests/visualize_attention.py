@@ -138,12 +138,15 @@ path_to_gz = '/nfs/data/1/rrazakami/work/data_cvn/data/dune/2023_trainings/lates
 event = _read_array(gz_path=path_to_gz)
 if __name__ == '__main__':
     # image_size = (518, 518)
-    # image_size = (500, 500)
+    image_size = (500, 500)
+    # image_size = (534,800)
+    # image_size = (600, 600)
     # image_size = (480, 480)
-    image_size = (384, 384)
+    # image_size = (384, 384)
     # image_size = (350, 350)
+    # image_size = (224, 224)
     output_dir = 'attn/'
-    patch_size = 4
+    patch_size = 14
 
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     # dist.init_process_group(backend='gloo', init_method='env://', master_addr='localhost', master_port='12355', rank=0, world_size=1)
@@ -178,8 +181,8 @@ if __name__ == '__main__':
     # pth_model = torch.load('dinov2_vitg14_pretrain.pth')
     ### ---
     ## Load a model from a training checkpoint. Training from scratch using cvn dataset
-    # pth_model = torch.load('../out_cvn_memlite_batchpergpu_16/model_final.rank_0.pth')
-    pth_model = torch.load('../out_cvn_memlite/model_final.rank_0.pth')
+    pth_model = torch.load('../out_cvn_memlite_batchpergpu_16/model_final.rank_0.pth')
+    # pth_model = torch.load('../out_cvn_memlite/model_final.rank_0.pth')
     model.load_state_dict(pth_model, strict=False)
     ## -----------------
     # pth_model = torch.load('/nfs/data/1/nitish/dino_output/small_run1_basemask/model_final.rank_0.pth',)
@@ -188,13 +191,13 @@ if __name__ == '__main__':
     print('Model loaded from transformers', model)
 
     ## LINES TO OPEN DENSE IMAGES -----------
-    img = Image.open('image.png')
+    # img = Image.open('image.png')
     # img = Image.open('cow-beach.jpg')
-    print(f'image size: {img.size}')
-    img0 = img.convert('RGB')
+    # print(f'image size: {img.size}')
+    # img0 = img.convert('RGB')
     #
     ## FOR LArTPC EVENTS -------------
-    # img0 = event
+    img0 = event
     ## ---------------------------------
     print(f'Converted image size: {img0.size}')
     transform = pth_transforms.Compose([

@@ -8,6 +8,37 @@ import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
 
+def load_model(path_to_model: str, patch_size: int=14, image_size: tuple=(500, 500), model_type: str='vit_large'):
+    """
+    Docstring for load_model
+    
+    :param path_to_model: path to the model checkpoint file. The weights will be loaded from this file
+        :type path_to_model: str
+    :param patch_size: Patch size used in the Vision Transformer model
+        :type patch_size: int
+    :param image_size: Input image size (height, width)
+        :type image_size: tuple
+    :param model_type: Type of the Vision Transformer model. These models use the dino architecture. Options are: 'vit_small', 'vit_base', 'vit_large', 'vit_giant2
+        :type model_type: str
+    """
+    from dinov2.models.vision_transformer import vit_large, vit_small, vit_base, vit_giant2
+    models = {
+        'vit_small': vit_small,
+        'vit_base': vit_base,
+        'vit_large': vit_large,
+        'vit_giant2': vit_giant2,
+    }
+    model = models[model_type](patch_size=patch_size, img_size=image_size[0])
+    model.to(torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"))
+    # disable gradients calculation
+    for p in model.parameters():
+        p.requires_grad = False
+    model.eval()
+    # Load model from a training checkpoint
+    pth_model = torch.load(path_to_model)
+    model.load_state_dict(pth_model, strict=False)
+    return model
+
 def _read_array(gz_path, swap_axes=False, plane='Z'):
         """
           Read a gzipped LArTPC image and return a PIL image in RGB format.

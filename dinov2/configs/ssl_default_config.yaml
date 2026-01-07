@@ -66,13 +66,14 @@ train:
   seed: 0
   num_workers: 10
   # OFFICIAL_EPOCH_LENGTH: 1250
-  OFFICIAL_EPOCH_LENGTH: 2
+  OFFICIAL_EPOCH_LENGTH: 300
   cache_dataset: true
   centering: "centering" # or "sinkhorn_knopp"
 student:
   arch: vit_large
   # patch_size: 16
   patch_size: 14 # for the 168x168 global crops
+  # patch_size: 4 # for LArTPC images
   drop_path_rate: 0.3
   layerscale: 1.0e-05
   drop_path_uniform: true
@@ -91,18 +92,26 @@ teacher:
   warmup_teacher_temp: 0.04
   teacher_temp: 0.07
   warmup_teacher_temp_epochs: 30
+  # warmup_teacher_temp_epochs: 2
 optim:
   # epochs: 100
-  epochs: 10
+  # epochs: 50
+  epochs: 100
   weight_decay: 0.04
   weight_decay_end: 0.4
+  # weight_decay: 0.1
+  # weight_decay_end: 0.25
   base_lr: 0.004  # learning rate for a batch size of 1024
   lr: 0.  # will be set after applying scaling rule
+  # base_lr: 0.01
+  # lr: 0.4  # will be set after applying scaling rule
   # warmup_epochs: 10
   warmup_epochs: 2
   min_lr: 1.0e-06
+  # min_lr: 1.0e-3
   clip_grad: 3.0
-  freeze_last_layer_epochs: 1
+  # freeze_last_layer_epochs: 1
+  freeze_last_layer_epochs: 10
   scaling_rule: sqrt_wrt_1024
   patch_embed_lr_mult: 0.2
   layerwise_decay: 0.9
@@ -121,4 +130,5 @@ crops:
   # local_crops_size: 96
   local_crops_size: 56 # for 14 patch size
 evaluation:
-  eval_period_iterations: 12500
+  # eval_period_iterations: 12500
+  eval_period_iterations: 5000

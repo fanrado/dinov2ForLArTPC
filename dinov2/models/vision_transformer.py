@@ -393,8 +393,10 @@ def vit_large(patch_size=16, num_register_tokens=0, **kwargs):
     model = DinoVisionTransformer(
         patch_size=patch_size,
         embed_dim=1024,
+        # embed_dim=1536,
         depth=24,
         num_heads=16,
+        # num_heads=32,
         mlp_ratio=4,
         block_fn=partial(Block, attn_class=MemEffAttention),
         num_register_tokens=num_register_tokens,

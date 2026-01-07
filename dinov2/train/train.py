@@ -21,7 +21,7 @@ from dinov2.utils.config import setup
 from dinov2.utils.utils import CosineScheduler
 
 from dinov2.train.ssl_meta_arch import SSLMetaArch
-
+from dinov2.eval.visualize_attention import get_attn
 
 torch.backends.cuda.matmul.allow_tf32 = True  # PyTorch 1.12 sets this to False by default
 logger = logging.getLogger("dinov2")
@@ -325,6 +325,12 @@ def do_train(cfg, model, resume=False):
         torch.cuda.synchronize()
         t1 = time.time() - t0 + data_time_
 
+        ## Get attention maps and save them
+        if iteration%50 == 0:
+            eval_gz_path = '/nfs/data/1/rrazakami/work/data_cvn/data/dune/2023_trainings/latest/dunevd/prodgenie_dunevd_1x8x6_nue/cvn_gaushit/72787986_732/event_r943_s1_e20520_h1695837055.gz'
+            get_attn(model.student.backbone, iteration, eval_gz_path)
+        ## End of getting attention maps
+        
         # peak_memory = torch.cuda.max_memory_allocated() / (1024.0 ** 3)  # in GB
         peak_memory = torch.cuda.max_memory_reserved() / (1024.0 ** 3)  # in GB
         peak_memory_dict['iteration'].append(iteration)
@@ -335,24 +341,7 @@ def do_train(cfg, model, resume=False):
         # #     break
         iteration = iteration + 1
         end_prep_time = time.time()
-        # print(f'Model state dict : {model.state_dict()}')
-        # sys.exit()
-        #
-        # # Create a dictionary to store the checkpoint information
-        # checkpoint = {
-        #     'epoch': 1,
-        #     'model_state_dict': model.state_dict(),
-        #     'optimizer_state_dict': optimizer.state_dict(),
-        #     'best_accuracy': lr,
-        # }
 
-        # # Define the path where you want to save the model
-        # save_path = 'tests/retrained_dinov2_model.pth'
-
-        # # Save the checkpoint dictionary to the .pth file
-        # torch.save(checkpoint, save_path)
-        # sys.exit()
-    # sys.exit()
     metric_logger.synchronize_between_processes()
     ## save peak_memory_dict in a json file
     eval_mem_runtime = {'runtime' : runtime_dict, 'peak_memory': peak_memory_dict}

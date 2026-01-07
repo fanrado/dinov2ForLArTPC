@@ -19,7 +19,7 @@ logger = logging.getLogger("dinov2")
 
 
 XFORMERS_ENABLED = os.environ.get("XFORMERS_DISABLED") is None
-XFORMERS_ENABLED = False
+# XFORMERS_ENABLED = False
 print('XFORMERS_ENABLED=', XFORMERS_ENABLED)
 try:
     if XFORMERS_ENABLED:
@@ -71,7 +71,6 @@ class Attention(nn.Module):
             nn.init.zeros_(self.qkv.bias)
         if self.proj.bias is not None:
             nn.init.zeros_(self.proj.bias)
-
     def forward(self, x: Tensor, is_causal: bool = False, return_attn=False) -> Tensor:
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads)
@@ -83,7 +82,7 @@ class Attention(nn.Module):
         attn = q @ k.transpose(-2, -1)
 
         attn = attn.softmax(dim=-1)
-        attn = self.attn_drop(attn)
+        attn = self.attn_drop(attn) ## does dropout on attention scores help ?
 
         # x = (attn @ v).transpose(1, 2).reshape(B, N, C)
         x = x.transpose(1, 2).contiguous().view(B, N, C)
@@ -98,7 +97,12 @@ class Attention(nn.Module):
 class MemEffAttention(Attention):
     def forward(self, x: Tensor, attn_bias=None, return_attn=False) -> Tensor:
         # return super().forward(x=x, return_attn=return_attn)
-        if not XFORMERS_AVAILABLE:
+        # if not XFORMERS_AVAILABLE:
+        #     if attn_bias is not None:
+        #         raise AssertionError("xFormers is required for using nested tensors")
+        #     # return super().forward(x)
+        #     return super().forward(x=x, return_attn=return_attn)
+        if return_attn:
             if attn_bias is not None:
                 raise AssertionError("xFormers is required for using nested tensors")
             # return super().forward(x)

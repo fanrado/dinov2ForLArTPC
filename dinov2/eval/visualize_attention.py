@@ -60,13 +60,15 @@ def _read_array(gz_path, swap_axes=False, plane='Z'):
         img = np.repeat(plane[..., None], 3, axis=2)           # (H,W,3)
         return Image.fromarray(img, mode="RGB")
 
-def get_attn(model, iteration, eval_gz_path):
-    eval_output_dir = "attn/"
+def get_attn(model: nn.Module, eval_gz_path: str, iteration: int=None, duringTraining=True, eval_output_dir: str=None):
+    eval_output_dir = "attn/" if eval_output_dir is None else eval_output_dir
     image_size = (500, 500)
     patch_size = 14
     event           = _read_array(gz_path=eval_gz_path)
     image_size      = tuple(image_size)
-    output_dir      = eval_output_dir + f'/{iteration:06d}/'
+    output_dir      = eval_output_dir + f'/{iteration:06d}/' if iteration is not None else eval_output_dir + '/eval/'
+    if iteration is None:
+        output_dir += os.path.basename(eval_gz_path).replace('.gz','')
     patch_size      = patch_size
 
     device          = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -116,6 +118,27 @@ def get_attn(model, iteration, eval_gz_path):
         plt.imsave(fname=fname, arr=attentions[j], format='jpg')
         print(f"{fname} saved.")
     
-    # reactivate gradients calculation in the model
-    for p in model.parameters():
-        p.requires_grad = True
+    if duringTraining:
+        # reactivate gradients calculation in the model
+        for p in model.parameters():
+            p.requires_grad = True
+
+def visualize_attn_cls():
+    parser = argparse.ArgumentParser(description='Visualize DINOv2 attn maps', add_help=True)
+    parser.add_argument('--model_path', type=str, required=True, help='Path to the model checkpoint file')
+    parser.add_argument('--eval_gz_path', type=str, required=True, help='Path to the eval gz file. This is a main folder that contains multiple gz files.')
+    parser.add_argument('--patch_size', type=int, default=14, help='Patch size used in the Vision Transformer model')
+    parser.add_argument('--image_size', type=int, nargs=2, default=(500, 500), help='Input image size (height, width)')
+    parser.add_argument('--model_type', type=str, default='vit_large', help="Type of the Vision Transformer model. Options are: 'vit_small', 'vit_base', 'vit_large', 'vit_giant2'")
+    parser.add_argument('--eval_output_dir', type=str, default=None, help='Directory to save the eval attention maps. If not provided, defaults to attn/')
+    args = parser.parse_args()
+
+    model = load_model(path_to_model=args.model_path, patch_size=args.patch_size, image_size=tuple(args.image_size), model_type=args.model_type)
+    for gz_file in [f for f in os.listdir(args.eval_gz_path) if f.endswith('.gz')]:
+        eval_gz_path = os.path.join(args.eval_gz_path, gz_file)
+        print(f"Processing {eval_gz_path}...")
+        get_attn(model=model, eval_gz_path=eval_gz_path, iteration=None, duringTraining=False, eval_output_dir=args.eval_output_dir)
+        # break  # Remove this break to process all files
+
+if __name__ == "__main__":
+    visualize_attn_cls()

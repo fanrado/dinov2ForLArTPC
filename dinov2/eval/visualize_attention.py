@@ -60,7 +60,7 @@ def _read_array(gz_path, swap_axes=False, plane='Z'):
         img = np.repeat(plane[..., None], 3, axis=2)           # (H,W,3)
         return Image.fromarray(img, mode="RGB")
 
-def get_attn(model: nn.Module, eval_gz_path: str, iteration: int=None, duringTraining=True, eval_output_dir: str=None):
+def get_attn(model: nn.Module, eval_gz_path: str, iteration: int=None, duringTraining=True, eval_output_dir: str=None, sumoverheads: bool=False):
     eval_output_dir = "attn/" if eval_output_dir is None else eval_output_dir
     image_size = (500, 500)
     patch_size = 14
@@ -73,14 +73,6 @@ def get_attn(model: nn.Module, eval_gz_path: str, iteration: int=None, duringTra
 
     device          = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
-    # model           = vit_large(patch_size=patch_size, img_size=image_size[0])
-    # model.to(device)
-    # for p in model.parameters():
-    #     p.requires_grad = False
-    # model.eval()
-
-    # pth_model = torch.load('../out_cvn_memlite_batchpergpu_16/model_final.rank_0.pth')
-    # model.load_state_dict(pth_model, strict=False)
     for p in model.parameters():
          p.requires_grad = False
     model.eval()
@@ -109,14 +101,38 @@ def get_attn(model: nn.Module, eval_gz_path: str, iteration: int=None, duringTra
     attentions = attentions.reshape(nh, w_featmap, h_featmap)
     attentions = nn.functional.interpolate(attentions.unsqueeze(0), scale_factor=patch_size, mode="nearest")[0].cpu().detach().numpy()
 
-    # save attentions heatmaps
-    os.makedirs(output_dir, exist_ok=True)
+    ## Get neutrino flavor from main folder and the filename as well.
+    attn_sumheads_name = 'attn_sumheads.png'
+    event_img_name = 'event.png'
+    overlay_img_name = 'image_with_attention.png'
+    print("----", eval_gz_path.split('/')[-4:])
+    useful_name = '-'.join(eval_gz_path.split('/')[-4:]).replace('.gz','')
+    event_img_name = useful_name + '-' + event_img_name
+    attn_sumheads_name = useful_name + '-' + attn_sumheads_name
+    overlay_img_name = useful_name + '-' + overlay_img_name
+    # sum over heads
+    if sumoverheads:
+        # save attentions heatmaps
+        os.makedirs(output_dir, exist_ok=True)
+        attention = np.sum(attentions, axis=0)
+        plt.imsave(fname=os.path.join(output_dir, event_img_name), arr=img0, format='png')
+        plt.imsave(fname=os.path.join(output_dir, attn_sumheads_name), arr=attention, format='png')
 
-    plt.imsave(fname=os.path.join(output_dir, "event.png"), arr=img0, format='png')
-    for j in range(nh):
-        fname = os.path.join(output_dir, "attn-head" + str(j) + ".jpg")
-        plt.imsave(fname=fname, arr=attentions[j], format='jpg')
-        print(f"{fname} saved.")
+        attention_mask_image = Image.open(os.path.join(output_dir, attn_sumheads_name)).convert("L").resize(img0.size)
+        img0.paste(attention_mask_image, (0, 0), attention_mask_image)
+
+        img0.save(f'{output_dir}/{overlay_img_name}')
+
+        print(f"{os.path.join(output_dir, attn_sumheads_name)} saved.")
+
+    else:
+        # save attentions heatmaps
+        os.makedirs(output_dir, exist_ok=True)
+        plt.imsave(fname=os.path.join(output_dir, event_img_name), arr=img0, format='png')
+        for j in range(nh):
+            fname = os.path.join(output_dir, "attn-head" + str(j) + ".jpg")
+            plt.imsave(fname=fname, arr=attentions[j], format='jpg')
+            print(f"{fname} saved.")
     
     if duringTraining:
         # reactivate gradients calculation in the model
@@ -134,11 +150,15 @@ def visualize_attn_cls():
     args = parser.parse_args()
 
     model = load_model(path_to_model=args.model_path, patch_size=args.patch_size, image_size=tuple(args.image_size), model_type=args.model_type)
+    i = 0
     for gz_file in [f for f in os.listdir(args.eval_gz_path) if f.endswith('.gz')]:
         eval_gz_path = os.path.join(args.eval_gz_path, gz_file)
         print(f"Processing {eval_gz_path}...")
-        get_attn(model=model, eval_gz_path=eval_gz_path, iteration=None, duringTraining=False, eval_output_dir=args.eval_output_dir)
+        get_attn(model=model, eval_gz_path=eval_gz_path, iteration=None, duringTraining=False, eval_output_dir=args.eval_output_dir, sumoverheads=True)
         # break  # Remove this break to process all files
+        # if i == 2:
+        #     break
+        # i +=1
 
 if __name__ == "__main__":
     visualize_attn_cls()

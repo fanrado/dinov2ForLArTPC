@@ -4,6 +4,15 @@ from PIL import Image
 from torch.utils.data import Dataset
 import sys
 
+## Split cvn dataset
+## ADD SPLITTING FUNCTIONALITY
+from typing import Union
+from enum import Enum
+
+class _Split(Enum):
+    raise NotImplementedError
+
+###-----------------------------------
 class CVNDataset(Dataset):
     """
     ViT transformer expect 3 channels RGB-like, the input should fit this scheme

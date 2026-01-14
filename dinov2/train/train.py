@@ -196,19 +196,24 @@ def do_train(cfg, model, resume=False):
         dtype=inputs_dtype,
     )
 
+    os.system('clear')
     # setup data loader
-
+    target_transform = lambda x:x  # return the target as is. This should return 0
     dataset = make_dataset(
         dataset_str=cfg.train.dataset_path,
-        transform=data_transform,
-        target_transform=lambda _: (),
+        transform=data_transform, ## Not needed if we use the targets. ==> supervised learning
+        # target_transform=lambda _: (),
+        # target_transform=lambda x:x, # return the target as is. This should return 0
+        target_transform=target_transform,
     )
 
     print('============== DATASET ==============')
+    print(f"Type of dataset : {type(dataset)}")
     print(dataset.root)
     print(dataset.entries[:5])
     print('Dataset OK ... They are loaded up to here.')
     print('=====================================')
+    
     # sampler_type = SamplerType.INFINITE
     sampler_type = SamplerType.SHARDED_INFINITE
     data_loader = make_data_loader(
@@ -220,7 +225,7 @@ def do_train(cfg, model, resume=False):
         sampler_type=sampler_type,
         sampler_advance=0,  # TODO(qas): fix this -- start_iter * cfg.train.batch_size_per_gpu,
         drop_last=True,
-        collate_fn=collate_fn,
+        collate_fn=collate_fn, ## Not needed if we use the targets. ==> supervised learning
     )
 
     # training loop
@@ -250,6 +255,10 @@ def do_train(cfg, model, resume=False):
         max_iter,
         start_iter,
     ):
+        print('--- New iteration ---')
+        print("LOADED DATA : ", data[1])
+        sys.exit()
+
         torch.cuda.synchronize()
         data_time_ = time.time() - end_prep_time
         torch.cuda.empty_cache()

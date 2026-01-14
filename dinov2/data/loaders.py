@@ -61,6 +61,9 @@ def _parse_dataset_str(dataset_str: str):
     elif name in ("CVN", "CVNDataset"):
         from .datasets.cvn import CVNDataset as _CVN
         class_ = _CVN
+        # handle split argument
+        # if "split" in kwargs:
+        #     kwargs["split"] = _CVN.Split[kwargs["split"]]
     else:
         raise ValueError(f'Unsupported dataset "{name}"')
 

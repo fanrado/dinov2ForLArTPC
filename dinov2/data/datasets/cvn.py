@@ -4,13 +4,43 @@ from PIL import Image
 from torch.utils.data import Dataset
 import sys
 
-## Split cvn dataset
-## ADD SPLITTING FUNCTIONALITY
-from typing import Union
-from enum import Enum
+# ## Split cvn dataset
+# ## ADD SPLITTING FUNCTIONALITY
+# from typing import Union
+# from enum import Enum
 
-class _Split(Enum):
-    raise NotImplementedError
+# _Target = int
+
+# class _Split(Enum):
+#     TRAIN       = "train"
+#     VAL         = "val"
+#     TEST        = "test"
+    
+#     @property
+#     def length(self) -> int:
+#         split_lengths = {
+#             _Split.TRAIN: 100_000,
+#             _Split.VAL: 20_000,
+#             _Split.TEST: 20_000,
+#         }
+#         return split_lengths[self]
+
+## Read info file for event ::: function from Nitish's repository dune_cvn.ipynb
+def get_eventinfo(info_path):
+    path = info_path
+    ret = {}
+    with open(path, 'rb') as info_file:
+        info = info_file.readlines()
+        ret['NuPDG'] = int(info[7].strip())
+        ret['NuEnergy'] = float(info[1])
+        ret['LepEnergy'] = float(info[2])
+        ret['Interaction'] = int(info[0].strip()) % 4
+        ret['NProton'] = int(info[8].strip())
+        ret['NPion'] = int(info[9].strip())
+        ret['NPiZero'] = int(info[10].strip())
+        ret['NNeutron'] = int(info[11].strip())
+        #ret['OscWeight'] = float(info[6])
+    return ret
 
 ###-----------------------------------
 class CVNDataset(Dataset):
@@ -20,8 +50,13 @@ class CVNDataset(Dataset):
     Also we can do a single plane in 3 channels so it would be training on 1 plane instead of 3
     Returns (image, dummy_target). DINOv2 will apply its own multi-crop transform.
     """
+    # # add global types
+    # Target = Union[_Target]
+    # Split = Union[_Split]
+
     def __init__(self, root,
                  split=None,
+                # split: "CVNDataset.Split",
                  swap_axes=False,          
                  transform=None,
                  target_transform=None,
@@ -79,7 +114,10 @@ class CVNDataset(Dataset):
                 # print(subdir)
                 for gz in sorted(glob(os.path.join(subdir, "event*.gz"))):
                     key = os.path.splitext(os.path.basename(gz))[0].replace("event", "")
-                    self.entries.append((flav, key, gz))
+                    self.entries.append((flav, key, gz)) # since self.__getitem__ only uses gz, we can include the .info here and 
+                                                                                                    # 1) ignore it for test, 
+                                                                                                    # 2) return it to select specific information,
+                                                        ## it looks like the info we need should be assigned to the target variable.
         # print("=============================== LENGTH OF DATASET : -------========" )
         # print(len(self.entries))
         # print(self.entries[0])
@@ -90,6 +128,11 @@ class CVNDataset(Dataset):
         if not self.entries:
             raise RuntimeError(f"No .gz files found under {root}/<flavor>/event*.gz")
 
+    # ## get access to the self._split property
+    # @property
+    # def split(self) -> "CVNDataset.Split":
+    #     return self._split
+    
     def __len__(self):
         return len(self.entries)
 
@@ -125,11 +168,14 @@ class CVNDataset(Dataset):
         _, _, gz = self.entries[idx]
         arr = self._read_array(gz)
         img = self._to_pil(arr)
-        target = 0  # dummy label for SSL
+        # target = 0  # dummy label for SSL
+        target = get_eventinfo(gz.replace('.gz', '.info'))
         if self.transform is not None:
             img = self.transform(img)
         if self.target_transform is not None:
             target = self.target_transform(target)
+        # print(f"TARGET VALUE : {target}")
         return img, target
+    
 
 

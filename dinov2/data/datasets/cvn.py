@@ -91,33 +91,33 @@ class CVNDataset(Dataset):
         # -------------------------------
         # Index all available events
         # -------------------------------
-        # cand_flavs = ["nue", "numu", "NC", "nutau", "nuecc", "numucc", "nutaucc"]
-        # self.entries = []
-        # for flav in cand_flavs:
-        #     d = os.path.join(root, flav)
-        #     if not os.path.isdir(d):
-        #         continue
-        #     for gz in sorted(glob(os.path.join(d, "event*.gz"))):
-        #         key = os.path.splitext(os.path.basename(gz))[0].replace("event", "")
-        #         self.entries.append((flav, key, gz))
-        cand_flavs = ["nu", "nue", "nutau"]
+        self.cand_flavs = ["nue", "numu", "NC", "nutau", "nuecc", "numucc", "nutaucc"]
         self.entries = []
-        for flav in cand_flavs:
-            folder_name = f'prodgenie_dunevd_1x8x6_{flav}/cvn_gaushit'
-            d = os.path.join(root, folder_name)
+        for flav in self.cand_flavs:
+            d = os.path.join(root, flav)
             if not os.path.isdir(d):
                 continue
-            for dd in os.listdir(d):
-                subdir = os.path.join(d, dd)
-                if not os.path.isdir(subdir):
-                    continue
-                # print(subdir)
-                for gz in sorted(glob(os.path.join(subdir, "event*.gz"))):
-                    key = os.path.splitext(os.path.basename(gz))[0].replace("event", "")
-                    self.entries.append((flav, key, gz)) # since self.__getitem__ only uses gz, we can include the .info here and 
-                                                                                                    # 1) ignore it for test, 
-                                                                                                    # 2) return it to select specific information,
-                                                        ## it looks like the info we need should be assigned to the target variable.
+            for gz in sorted(glob(os.path.join(d, "event*.gz"))):
+                key = os.path.splitext(os.path.basename(gz))[0].replace("event", "")
+                self.entries.append((flav, key, gz))
+        # cand_flavs = ["nu", "nue", "nutau"]
+        # self.entries = []
+        # for flav in cand_flavs:
+        #     folder_name = f'prodgenie_dunevd_1x8x6_{flav}/cvn_gaushit'
+        #     d = os.path.join(root, folder_name)
+        #     if not os.path.isdir(d):
+        #         continue
+        #     for dd in os.listdir(d):
+        #         subdir = os.path.join(d, dd)
+        #         if not os.path.isdir(subdir):
+        #             continue
+        #         # print(subdir)
+        #         for gz in sorted(glob(os.path.join(subdir, "event*.gz"))):
+        #             key = os.path.splitext(os.path.basename(gz))[0].replace("event", "")
+        #             self.entries.append((flav, key, gz)) # since self.__getitem__ only uses gz, we can include the .info here and 
+        #                                                                                             # 1) ignore it for test, 
+        #                                                                                             # 2) return it to select specific information,
+        #                                                 ## it looks like the info we need should be assigned to the target variable.
         # print("=============================== LENGTH OF DATASET : -------========" )
         # print(len(self.entries))
         # print(self.entries[0])
@@ -127,7 +127,9 @@ class CVNDataset(Dataset):
 
         if not self.entries:
             raise RuntimeError(f"No .gz files found under {root}/<flavor>/event*.gz")
-
+    
+    def classes(self):
+        return self.cand_flavs
     # ## get access to the self._split property
     # @property
     # def split(self) -> "CVNDataset.Split":
@@ -175,6 +177,8 @@ class CVNDataset(Dataset):
         if self.target_transform is not None:
             target = self.target_transform(target)
         # print(f"TARGET VALUE : {target}")
+        ## Try to predict flavor first. Later we can try to predict other things from the info file.
+        target = self.cand_flavs.index(self.entries[idx][0])  # convert flavor to index
         return img, target
     
 

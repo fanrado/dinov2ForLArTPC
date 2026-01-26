@@ -19,9 +19,9 @@ logger = logging.getLogger("dinov2")
 class DataAugmentationDINO(object):
     def __init__(
         self,
-        global_crops_scale,
-        local_crops_scale,
-        local_crops_number,
+        global_crops_scale=None,
+        local_crops_scale=None,
+        local_crops_number=None,
         global_crops_size=224,
         local_crops_size=96,
     ):
@@ -40,62 +40,77 @@ class DataAugmentationDINO(object):
         logger.info(f"local_crops_size: {local_crops_size}")
         logger.info("###################################")
 
-        # random resized crop and flip
-        self.geometric_augmentation_global = transforms.Compose(
-            [
-                transforms.RandomResizedCrop(
-                    global_crops_size, scale=global_crops_scale, interpolation=transforms.InterpolationMode.BICUBIC
-                ),
-                transforms.RandomHorizontalFlip(p=0.5),
-            ]
-        )
+        supervised_learning = True if (self.local_crops_number is None or self.local_crops_scale is None) else False
+        if supervised_learning:
+            ## Center crop in order to train a linear classifier on top of DINOv2 features
+            self.centerCrop = transforms.Compose(
+                [
+                    transforms.CenterCrop(global_crops_size),
+                    transforms.ToTensor(),
+                ]
+            )
+        else:
+            # random resized crop and flip
+            self.geometric_augmentation_global = transforms.Compose(
+                [
+                    transforms.RandomResizedCrop(
+                        global_crops_size, scale=global_crops_scale, interpolation=transforms.InterpolationMode.BICUBIC
+                    ),
+                    transforms.RandomHorizontalFlip(p=0.5),
+                ]
+            )
 
-        self.geometric_augmentation_local = transforms.Compose(
-            [
-                transforms.RandomResizedCrop(
-                    local_crops_size, scale=local_crops_scale, interpolation=transforms.InterpolationMode.BICUBIC
-                ),
-                transforms.RandomHorizontalFlip(p=0.5),
-            ]
-        )
+            self.geometric_augmentation_local = transforms.Compose(
+                [
+                    transforms.RandomResizedCrop(
+                        local_crops_size, scale=local_crops_scale, interpolation=transforms.InterpolationMode.BICUBIC
+                    ),
+                    transforms.RandomHorizontalFlip(p=0.5),
+                ]
+            )
 
-        # color distorsions / blurring
-        color_jittering = transforms.Compose(
-            [
-                transforms.RandomApply(
-                    [transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2, hue=0.0)],
-                    p=0.8,
-                ),
-                transforms.RandomGrayscale(p=0.2),
-            ]
-        )
+            # color distorsions / blurring
+            color_jittering = transforms.Compose(
+                [
+                    transforms.RandomApply(
+                        [transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2, hue=0.0)],
+                        p=0.8,
+                    ),
+                    transforms.RandomGrayscale(p=0.2),
+                ]
+            )
 
-        global_transfo1_extra = GaussianBlur(p=1.0)
+            global_transfo1_extra = GaussianBlur(p=1.0)
 
-        global_transfo2_extra = transforms.Compose(
-            [
-                GaussianBlur(p=0.1),
-                transforms.RandomSolarize(threshold=128, p=0.0),
-            ]
-        )
+            global_transfo2_extra = transforms.Compose(
+                [
+                    GaussianBlur(p=0.1),
+                    transforms.RandomSolarize(threshold=128, p=0.0),
+                ]
+            )
 
-        local_transfo_extra = GaussianBlur(p=0.5)
+            local_transfo_extra = GaussianBlur(p=0.5)
 
-        # normalization
-        self.normalize = transforms.Compose(
-            [
-                transforms.ToTensor(),
-                make_normalize_transform(),
-            ]
-        )
+            # normalization
+            self.normalize = transforms.Compose(
+                [
+                    transforms.ToTensor(),
+                    make_normalize_transform(),
+                ]
+            )
 
-        self.global_transfo1 = transforms.Compose([color_jittering, global_transfo1_extra, self.normalize])
-        self.global_transfo2 = transforms.Compose([color_jittering, global_transfo2_extra, self.normalize])
-        self.local_transfo = transforms.Compose([color_jittering, local_transfo_extra, self.normalize])
+            self.global_transfo1 = transforms.Compose([color_jittering, global_transfo1_extra, self.normalize])
+            self.global_transfo2 = transforms.Compose([color_jittering, global_transfo2_extra, self.normalize])
+            self.local_transfo = transforms.Compose([color_jittering, local_transfo_extra, self.normalize])
 
     def __call__(self, image):
         output = {}
 
+        ## Center crop image following the example of linear classification on DINOv2 features
+        if self.local_crops_number is None or self.local_crops_scale is None:
+            output = self.centerCrop(image)
+            return output
+        
         # global crops:
         im1_base = self.geometric_augmentation_global(image)
         global_crop_1 = self.global_transfo1(im1_base)

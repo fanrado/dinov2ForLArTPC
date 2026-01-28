@@ -25,22 +25,6 @@ import sys
 #         }
 #         return split_lengths[self]
 
-## Read info file for event ::: function from Nitish's repository dune_cvn.ipynb
-def get_eventinfo(info_path):
-    path = info_path
-    ret = {}
-    with open(path, 'rb') as info_file:
-        info = info_file.readlines()
-        ret['NuPDG'] = int(info[7].strip())
-        ret['NuEnergy'] = float(info[1])
-        ret['LepEnergy'] = float(info[2])
-        ret['Interaction'] = int(info[0].strip()) % 4
-        ret['NProton'] = int(info[8].strip())
-        ret['NPion'] = int(info[9].strip())
-        ret['NPiZero'] = int(info[10].strip())
-        ret['NNeutron'] = int(info[11].strip())
-        #ret['OscWeight'] = float(info[6])
-    return ret
 
 ###-----------------------------------
 class CVNDataset(Dataset):
@@ -100,7 +84,9 @@ class CVNDataset(Dataset):
             for gz in sorted(glob(os.path.join(d, "event*.gz"))):
                 key = os.path.splitext(os.path.basename(gz))[0].replace("event", "")
                 self.entries.append((flav, key, gz))
-        self.pdgs = [12, 14, 16, -12, -14, -16]  # corresponding PDG codes for flavors
+        # self.pdgs = [12, 14, 16, -12, -14, -16, 1]  # corresponding PDG codes for flavors
+        self.classes = ['numuCC', 'nueCC', 'nc']
+
         # cand_flavs = ["nu", "nue", "nutau"]
         # self.entries = []
         # for flav in cand_flavs:
@@ -167,12 +153,29 @@ class CVNDataset(Dataset):
         img = np.repeat(plane[..., None], 3, axis=2)           # (H,W,3)
         return Image.fromarray(img, mode="RGB")
 
+    ## Read info file for event ::: function from Nitish's repository dune_cvn.ipynb
+    def get_eventinfo(self, info_path):
+        path = info_path
+        ret = {}
+        with open(path, 'rb') as info_file:
+            info = info_file.readlines()
+            ret['NuPDG'] = int(info[7].strip())
+            ret['NuEnergy'] = float(info[1])
+            ret['LepEnergy'] = float(info[2])
+            ret['Interaction'] = int(info[0].strip()) % 4
+            ret['NProton'] = int(info[8].strip())
+            ret['NPion'] = int(info[9].strip())
+            ret['NPiZero'] = int(info[10].strip())
+            ret['NNeutron'] = int(info[11].strip())
+            #ret['OscWeight'] = float(info[6])
+        return ret
+    
     def __getitem__(self, idx):
         _, _, gz = self.entries[idx]
         arr = self._read_array(gz)
         img = self._to_pil(arr)
         # target = 0  # dummy label for SSL
-        target = get_eventinfo(gz.replace('.gz', '.info'))
+        target = self.get_eventinfo(gz.replace('.gz', '.info'))
         if self.transform is not None:
             img = self.transform(img)
         if self.target_transform is not None:
@@ -183,9 +186,14 @@ class CVNDataset(Dataset):
         # print(f'type(target) : {type(target)}')
         ##
         ## Try to predict the NuPDG
-        target = self.pdgs.index(target['NuPDG'])  # convert NuPDG to index
-        # print(f'type(target) after NuPDG assignment : {type(target)}')
-        # sys.exit()
+        # target = self.pdgs.index(target['NuPDG'])  # convert NuPDG to index
+
+        if target['NuPDG'] in [14, -14]:   # numuCC
+            target = 0
+        elif target['NuPDG'] in [12, -12]: # nueCC
+            target = 1
+        else:                              # NC
+            target = 2
         return img, target
     
 

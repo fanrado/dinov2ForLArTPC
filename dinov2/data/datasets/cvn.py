@@ -100,6 +100,7 @@ class CVNDataset(Dataset):
             for gz in sorted(glob(os.path.join(d, "event*.gz"))):
                 key = os.path.splitext(os.path.basename(gz))[0].replace("event", "")
                 self.entries.append((flav, key, gz))
+        self.pdgs = [12, 14, 16, -12, -14, -16]  # corresponding PDG codes for flavors
         # cand_flavs = ["nu", "nue", "nutau"]
         # self.entries = []
         # for flav in cand_flavs:
@@ -177,8 +178,14 @@ class CVNDataset(Dataset):
         if self.target_transform is not None:
             target = self.target_transform(target)
         # print(f"TARGET VALUE : {target}")
-        ## Try to predict flavor first. Later we can try to predict other things from the info file.
-        target = self.cand_flavs.index(self.entries[idx][0])  # convert flavor to index
+        ## Try to predict flavor first. Later we can try to predict other things from the info file.        
+        # target = self.cand_flavs.index(self.entries[idx][0])  # convert flavor to index
+        # print(f'type(target) : {type(target)}')
+        ##
+        ## Try to predict the NuPDG
+        target = self.pdgs.index(target['NuPDG'])  # convert NuPDG to index
+        # print(f'type(target) after NuPDG assignment : {type(target)}')
+        # sys.exit()
         return img, target
     
 

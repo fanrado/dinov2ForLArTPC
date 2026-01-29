@@ -75,7 +75,8 @@ class CVNDataset(Dataset):
         # -------------------------------
         # Index all available events
         # -------------------------------
-        self.cand_flavs = ["nue", "numu", "NC", "nutau", "nuecc", "numucc", "nutaucc"]
+        # self.cand_flavs = ["nue", "numu", "NC", "nutau", "nuecc", "numucc", "nutaucc"] ## "NC" changed to "nc" to match folder name
+        self.cand_flavs = ["nue", "numu", "nc", "nutau", "nuecc", "numucc", "nutaucc"]
         self.entries = []
         for flav in self.cand_flavs:
             d = os.path.join(root, flav)
@@ -85,7 +86,8 @@ class CVNDataset(Dataset):
                 key = os.path.splitext(os.path.basename(gz))[0].replace("event", "")
                 self.entries.append((flav, key, gz))
         # self.pdgs = [12, 14, 16, -12, -14, -16, 1]  # corresponding PDG codes for flavors
-        self.classes = ['numuCC', 'nueCC', 'nc']
+        # self.classes = ['numuCC', 'nueCC', 'nc']
+        self.classes = ['numu', 'nue', 'nc']
 
         # cand_flavs = ["nu", "nue", "nutau"]
         # self.entries = []
@@ -192,7 +194,7 @@ class CVNDataset(Dataset):
             target = 0
         elif target['NuPDG'] in [12, -12]: # nueCC
             target = 1
-        else:                              # NC
+        elif target['NuPDG'] in [1]:                             # NC
             target = 2
         return img, target
     

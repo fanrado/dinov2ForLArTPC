@@ -3,7 +3,7 @@ from glob import glob
 from PIL import Image
 from torch.utils.data import Dataset
 import sys
-
+from torchvision import transforms
 # ## Split cvn dataset
 # ## ADD SPLITTING FUNCTIONALITY
 # from typing import Union
@@ -75,8 +75,8 @@ class CVNDataset(Dataset):
         # -------------------------------
         # Index all available events
         # -------------------------------
-        # self.cand_flavs = ["nue", "numu", "NC", "nutau", "nuecc", "numucc", "nutaucc"] ## "NC" changed to "nc" to match folder name
-        self.cand_flavs = ["nue", "numu", "nc", "nutau", "nuecc", "numucc", "nutaucc"]
+        # self.cand_flavs = ["nue", "numu", "NC"] ## "NC" changed to "nc" to match folder name
+        self.cand_flavs = ["numu", "nue", "nc"]
         self.entries = []
         for flav in self.cand_flavs:
             d = os.path.join(root, flav)
@@ -85,9 +85,10 @@ class CVNDataset(Dataset):
             for gz in sorted(glob(os.path.join(d, "event*.gz"))):
                 key = os.path.splitext(os.path.basename(gz))[0].replace("event", "")
                 self.entries.append((flav, key, gz))
+
         # self.pdgs = [12, 14, 16, -12, -14, -16, 1]  # corresponding PDG codes for flavors
         # self.classes = ['numuCC', 'nueCC', 'nc']
-        self.classes = ['numu', 'nue', 'nc']
+        self.classes = self.cand_flavs
 
         # cand_flavs = ["nu", "nue", "nutau"]
         # self.entries = []
@@ -155,6 +156,26 @@ class CVNDataset(Dataset):
         img = np.repeat(plane[..., None], 3, axis=2)           # (H,W,3)
         return Image.fromarray(img, mode="RGB")
 
+    def _to_original_pil(self, arr3):
+        """
+        Convert a (3,H,W) numpy uint8 to PIL according to options:
+          - plane=None: return RGB-like from [U,V,Z] (3ch)
+          - plane=..., mono=mono3: replicate selected plane -> 3ch RGB-like
+          - plane=..., mono=mono1: return single-channel 'L' image (requires in_chans=1 model)
+        """
+        if self.plane is None:
+            img = np.moveaxis(arr3, 0, -1)                     # (H,W,3)
+            return Image.fromarray(img, mode="RGB")
+        # choose one plane
+        idx_map = {"U": 0, "V": 1, "Z": 2, "0": 0, "1": 1, "2": 2}
+        idx = idx_map[self.plane]
+        plane = arr3[idx]                                      # (H,W)
+        # if self.mono == "mono1":
+        return Image.fromarray(plane, mode="L")            # true 1-channel
+        # # default: replicate into 3 channels (Option A)
+        # img = np.repeat(plane[..., None], 3, axis=2)           # (H,W,3)
+        # return Image.fromarray(img, mode="RGB")
+    
     ## Read info file for event ::: function from Nitish's repository dune_cvn.ipynb
     def get_eventinfo(self, info_path):
         path = info_path
@@ -176,6 +197,8 @@ class CVNDataset(Dataset):
         _, _, gz = self.entries[idx]
         arr = self._read_array(gz)
         img = self._to_pil(arr)
+        convert_to_tensor = transforms.ToTensor()
+        img_original = convert_to_tensor(self._to_original_pil(arr))
         # target = 0  # dummy label for SSL
         target = self.get_eventinfo(gz.replace('.gz', '.info'))
         if self.transform is not None:
@@ -196,7 +219,7 @@ class CVNDataset(Dataset):
             target = 1
         elif target['NuPDG'] in [1]:                             # NC
             target = 2
-        return img, target
+        return img, target, img_original  # return original image for visualization
     
 
 

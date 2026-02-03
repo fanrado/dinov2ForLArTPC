@@ -76,35 +76,37 @@ class CVNDataset(Dataset):
         # Index all available events
         # -------------------------------
         # self.cand_flavs = ["nue", "numu", "NC"] ## "NC" changed to "nc" to match folder name
-        self.cand_flavs = ["numu", "nue", "nc"]
-        self.entries = []
-        for flav in self.cand_flavs:
-            d = os.path.join(root, flav)
-            if not os.path.isdir(d):
-                continue
-            for gz in sorted(glob(os.path.join(d, "event*.gz"))):
-                key = os.path.splitext(os.path.basename(gz))[0].replace("event", "")
-                self.entries.append((flav, key, gz))
-
-        # self.pdgs = [12, 14, 16, -12, -14, -16, 1]  # corresponding PDG codes for flavors
-        # self.classes = ['numuCC', 'nueCC', 'nc']
-        self.classes = self.cand_flavs
-
-        # cand_flavs = ["nu", "nue", "nutau"]
+        # self.cand_flavs = ["numu", "nue", "nc"]
         # self.entries = []
-        # for flav in cand_flavs:
-        #     folder_name = f'prodgenie_dunevd_1x8x6_{flav}/cvn_gaushit'
-        #     d = os.path.join(root, folder_name)
+        # for flav in self.cand_flavs:
+        #     d = os.path.join(root, flav)
         #     if not os.path.isdir(d):
         #         continue
-        #     for dd in os.listdir(d):
-        #         subdir = os.path.join(d, dd)
-        #         if not os.path.isdir(subdir):
-        #             continue
-        #         # print(subdir)
-        #         for gz in sorted(glob(os.path.join(subdir, "event*.gz"))):
-        #             key = os.path.splitext(os.path.basename(gz))[0].replace("event", "")
-        #             self.entries.append((flav, key, gz)) # since self.__getitem__ only uses gz, we can include the .info here and 
+        #     for gz in sorted(glob(os.path.join(d, "event*.gz"))):
+        #         key = os.path.splitext(os.path.basename(gz))[0].replace("event", "")
+        #         self.entries.append((flav, key, gz))
+
+        # # self.pdgs = [12, 14, 16, -12, -14, -16, 1]  # corresponding PDG codes for flavors
+        # # self.classes = ['numuCC', 'nueCC', 'nc']
+        # self.classes = self.cand_flavs
+
+        self.cand_flavs = ["nu", "nue", "nutau"]
+        self.entries = []
+        for flav in self.cand_flavs:
+            folder_name = f'prodgenie_dunevd_1x8x6_{flav}/cvn_gaushit'
+            d = os.path.join(root, folder_name)
+            if not os.path.isdir(d):
+                continue
+            for dd in os.listdir(d):
+                subdir = os.path.join(d, dd)
+                if not os.path.isdir(subdir):
+                    continue
+                # print(subdir)
+                for gz in sorted(glob(os.path.join(subdir, "event*.gz"))):
+                    key = os.path.splitext(os.path.basename(gz))[0].replace("event", "")
+                    self.entries.append((flav, key, gz)) # since self.__getitem__ only uses gz, we can include the .info here and 
+        self.classes = self.cand_flavs
+        self.classes.append('nc')
         #                                                                                             # 1) ignore it for test, 
         #                                                                                             # 2) return it to select specific information,
         #                                                 ## it looks like the info we need should be assigned to the target variable.
@@ -114,7 +116,8 @@ class CVNDataset(Dataset):
         # print('================================')
         # print('================================')
         # sys.exit()
-
+        # self.classes = self.cand_flavs
+        # self.classes[0] = 'numu'
         if not self.entries:
             raise RuntimeError(f"No .gz files found under {root}/<flavor>/event*.gz")
     
@@ -153,7 +156,7 @@ class CVNDataset(Dataset):
         if self.mono == "mono1":
             return Image.fromarray(plane, mode="L")            # true 1-channel
         # default: replicate into 3 channels (Option A)
-        img = np.repeat(plane[..., None], 3, axis=2)           # (H,W,3)
+        img = np.repeat(plane[..., None], 3, axis=2)     # (H,W,3)
         return Image.fromarray(img, mode="RGB")
 
     def _to_original_pil(self, arr3):
@@ -197,7 +200,10 @@ class CVNDataset(Dataset):
         _, _, gz = self.entries[idx]
         arr = self._read_array(gz)
         img = self._to_pil(arr)
-        convert_to_tensor = transforms.ToTensor()
+        # convert_to_tensor = transforms.ToTensor()
+        convert_to_tensor = transforms.Compose([
+            transforms.ToTensor(),
+        ])
         img_original = convert_to_tensor(self._to_original_pil(arr))
         # target = 0  # dummy label for SSL
         target = self.get_eventinfo(gz.replace('.gz', '.info'))
@@ -212,14 +218,18 @@ class CVNDataset(Dataset):
         ##
         ## Try to predict the NuPDG
         # target = self.pdgs.index(target['NuPDG'])  # convert NuPDG to index
-
+        label = None
         if target['NuPDG'] in [14, -14]:   # numuCC
-            target = 0
+            label = 0
         elif target['NuPDG'] in [12, -12]: # nueCC
-            target = 1
-        elif target['NuPDG'] in [1]:                             # NC
-            target = 2
-        return img, target, img_original  # return original image for visualization
+            label = 1
+        # elif target['NuPDG'] in [1]:                             # NC
+        #     target = 2
+        elif target['NuPDG'] in [16, -16]: # nutauCC
+            label = 2
+        elif target['NuPDG'] in [1]:   # NC
+            label = 3
+        return img, label#, img_original  # return original image for visualization
     
 
 

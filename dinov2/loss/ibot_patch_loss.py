@@ -7,6 +7,7 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from torch import nn
+import math
 
 import logging
 
@@ -100,6 +101,13 @@ class iBOTPatchLoss(nn.Module):
         s = student_patch_tokens
         loss = torch.sum(t * F.log_softmax(s / self.student_temp, dim=-1), dim=-1)
         loss = torch.sum(loss * student_masks_flat.float(), dim=-1) / student_masks_flat.sum(dim=-1).clamp(min=1.0)
+        if math.isnan(loss.mean()):
+            print("iBOTPatchLoss\n=====================")
+            print("Teacher path tokens : ", t)
+            print("Student path tokens : ", s)
+            print("student masks flat : ", student_masks_flat, student_masks_flat.float())
+            print("Misc : ", self.student_temp, self.center, self.updated)
+            print("=====================")
         return -loss.mean()
 
     def forward_masked(

@@ -7,7 +7,7 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from torch import nn
-
+import math
 
 class DINOLoss(nn.Module):
     def __init__(
@@ -70,6 +70,12 @@ class DINOLoss(nn.Module):
             lsm = F.log_softmax(s / self.student_temp, dim=-1)
             for t in teacher_out_softmaxed_centered_list:
                 loss = torch.sum(t * lsm, dim=-1)
+                if math.isnan(loss.mean()):
+                    print("CLSTokenLoss\n=====================")
+                    print("Teacher path tokens : ", t)
+                    print("Student path tokens : ", s)
+                    print("Misc : ", self.student_temp, self.center, self.updated)
+                    print("=====================")
                 total_loss -= loss.mean()
         return total_loss
 

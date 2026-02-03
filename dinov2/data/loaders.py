@@ -61,6 +61,9 @@ def _parse_dataset_str(dataset_str: str):
     elif name in ("CVN", "CVNDataset"):
         from .datasets.cvn import CVNDataset as _CVN
         class_ = _CVN
+    elif name == "Custom":
+        from .datasets.custom_images import CustomImagesDataset as _Custom
+        class_ = _Custom
     else:
         raise ValueError(f'Unsupported dataset "{name}"')
 

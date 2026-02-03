@@ -6,3 +6,4 @@
 from .image_net import ImageNet
 from .image_net_22k import ImageNet22k
 from .cvn import CVNDataset
+from .custom_images import CustomImagesDataset

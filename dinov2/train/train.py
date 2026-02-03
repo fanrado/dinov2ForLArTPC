@@ -15,7 +15,7 @@ import torch
 from dinov2.data import SamplerType, make_data_loader, make_dataset
 from dinov2.data import collate_data_and_cast, DataAugmentationDINO, MaskingGenerator
 import dinov2.distributed as distributed
-from dinov2.fsdp import FSDPCheckpointer
+from dinov2.fsdp import FSDPCheckpointer, rankstr
 from dinov2.logging import MetricLogger
 from dinov2.utils.config import setup
 from dinov2.utils.utils import CosineScheduler
@@ -135,6 +135,7 @@ def do_test(cfg, model, iteration):
 
 
 def do_train(cfg, model, resume=False, grad_monitor=None, writer=None):
+    #  torch.autograd.set_detect_anomaly(True)
     model.train()
     inputs_dtype = torch.half
     fp16_scaler = model.fp16_scaler  # for mixed precision training
@@ -154,13 +155,14 @@ def do_train(cfg, model, resume=False, grad_monitor=None, writer=None):
     checkpointer = FSDPCheckpointer(model, cfg.train.output_dir, optimizer=optimizer, save_to_disk=True)
 
     start_iter = checkpointer.resume_or_load(cfg.MODEL.WEIGHTS, resume=resume).get("iteration", -1) + 1
+    #  start_iter = checkpointer.resume_or_load(cfg.MODEL.WEIGHTS.replace("rank_0", rankstr()), resume=resume).get("iteration", -1) + 1
 
     OFFICIAL_EPOCH_LENGTH = cfg.train.OFFICIAL_EPOCH_LENGTH
     max_iter = cfg.optim.epochs * OFFICIAL_EPOCH_LENGTH
 
     periodic_checkpointer = PeriodicCheckpointer(
         checkpointer,
-        period=3 * OFFICIAL_EPOCH_LENGTH,
+        period=2 * OFFICIAL_EPOCH_LENGTH,
         max_iter=max_iter,
         max_to_keep=3,
     )
@@ -187,6 +189,7 @@ def do_train(cfg, model, resume=False, grad_monitor=None, writer=None):
         collate_data_and_cast,
         mask_ratio_tuple=cfg.ibot.mask_ratio_min_max,
         mask_probability=cfg.ibot.mask_sample_probability,
+        patch_size=patch_size,
         n_tokens=n_tokens,
         mask_generator=mask_generator,
         dtype=inputs_dtype,
@@ -230,6 +233,27 @@ def do_train(cfg, model, resume=False, grad_monitor=None, writer=None):
         start_iter,
     ):
         current_batch_size = data["collated_global_crops"].shape[0] / 2
+        # --- Mask statistics logging ----------------------------------------
+        collated_masks = data["collated_masks"]
+        if collated_masks is not None:
+            # number of masked patches per sample
+            num_masked_per_sample = collated_masks.sum(dim=1)  # (B,)
+
+            avg_masked = num_masked_per_sample.float().mean()
+            min_masked = num_masked_per_sample.min()
+            max_masked = num_masked_per_sample.max()
+
+            total_patches = collated_masks.shape[1]
+            mask_ratio = avg_masked / float(total_patches)
+
+            # update MetricLogger so it shows up in console + JSON
+            metric_logger.update(
+                masked_patches_avg=avg_masked.item(),
+                masked_patches_min=min_masked.item(),
+                masked_patches_max=max_masked.item(),
+                masked_patches_ratio=mask_ratio.item(),
+            )
+        # ---------------------------------------------------------------------
         if iteration > max_iter:
             return
 
@@ -247,7 +271,8 @@ def do_train(cfg, model, resume=False, grad_monitor=None, writer=None):
         optimizer.zero_grad(set_to_none=True)
         loss_dict = model.forward_backward(data, teacher_temp=teacher_temp)
 
-        grad_monitor.record(model.student["backbone"], step=iteration)
+        if iteration % 100 == 0:
+            grad_monitor.record(model.student["backbone"], step=iteration)
         # clip gradients
 
         if fp16_scaler is not None:
@@ -292,7 +317,15 @@ def do_train(cfg, model, resume=False, grad_monitor=None, writer=None):
         loss_dict_reduced = {k: v.item() / distributed.get_global_size() for k, v in loss_dict.items()}
 
         if math.isnan(sum(loss_dict_reduced.values())):
+            print(loss_dict_reduced)
             logger.info("NaN detected")
+            #  iteration = iteration + 1
+            #  continue
+            if grad_monitor:
+                epoch = iteration // (10*OFFICIAL_EPOCH_LENGTH)
+                grad_monitor.record(model.student["backbone"], step=iteration)
+                grad_monitor.save_json(f"{cfg.train.output_dir}/grads/nan_grad_history_10epoch{epoch:04d}.json")
+            checkpointer.save("nan_checkpoint")
             raise AssertionError
         losses_reduced = sum(loss for loss in loss_dict_reduced.values())
 
@@ -310,9 +343,9 @@ def do_train(cfg, model, resume=False, grad_monitor=None, writer=None):
             torch.cuda.synchronize()
         periodic_checkpointer.step(iteration)
 
-        if grad_monitor and iteration % 1000 == 0:
-            epoch = iteration // 1000
-            grad_monitor.save_json(f"{cfg.train.output_dir}/grads/grad_history_epoch{epoch:04d}.json")
+        if grad_monitor and iteration % (10*OFFICIAL_EPOCH_LENGTH) == 0:
+            epoch = iteration // (10*OFFICIAL_EPOCH_LENGTH)
+            grad_monitor.save_json(f"{cfg.train.output_dir}/grads/grad_history_10epoch{epoch:04d}.json")
 
         iteration = iteration + 1
     metric_logger.synchronize_between_processes()
@@ -345,6 +378,8 @@ def main(args):
     #  print("DEBUG ::: ")
 
     logger.info("Model:\n{}".format(model))
+    with open('model.txt', 'w') as f_model:
+        print("Model:\n{}".format(model), file=f_model)
     if args.eval_only:
         iteration = (
             FSDPCheckpointer(model, save_dir=cfg.train.output_dir)

@@ -4,10 +4,50 @@
 # found in the LICENSE file in the root directory of this source tree.
 
 import torch
+import torch.nn.functional as F
 import random
+import math
 
+def compute_valid_patches_from_crops(
+    crops: torch.Tensor,
+    n_tokens: int,
+    patch_size: int,
+    min_nonzero_frac: float = 0.02,
+    eps: float = 0.0,
+) -> torch.Tensor:
+    """
+    Compute a boolean mask of 'valid' patches based on occupancy.
 
-def collate_data_and_cast(samples_list, mask_ratio_tuple, mask_probability, dtype, n_tokens=None, mask_generator=None):
+    Args:
+        crops: (B, C, H, W) tensor of global crops
+        n_tokens: number of patch tokens per image (N_patches)
+        min_nonzero_frac: minimum fraction of non-zero pixels in a patch
+                          to consider it valid.
+        eps: threshold for treating a pixel as non-zero.
+
+    Returns:
+        valid: (B, N_patches) bool tensor: True = patch has enough non-zero pixels.
+    """
+    B, C, H, W = crops.shape
+
+    # Binary map of "non-zero pixels" (any channel exceeds eps in abs value)
+    nonzero = (crops.abs() > eps).any(dim=1, keepdim=True).float()  # (B, 1, H, W)
+
+    # Average occupancy per patch using avg_pool2d
+    occ = F.avg_pool2d(
+        nonzero,
+        kernel_size=patch_size,
+        stride=patch_size,
+    )  # (B, 1, H/ps, W/ps)
+
+    # Flatten to (B, N_patches)
+    occ = occ.view(B, -1)
+
+    # Threshold
+    valid = occ >= min_nonzero_frac  # (B, N_patches) bool
+    return valid
+
+def collate_data_and_cast(samples_list, mask_ratio_tuple, mask_probability, patch_size, dtype, n_tokens=None, mask_generator=None):
     # dtype = torch.half  # TODO: Remove
 
     n_global_crops = len(samples_list[0][0]["global_crops"])
@@ -19,6 +59,24 @@ def collate_data_and_cast(samples_list, mask_ratio_tuple, mask_probability, dtyp
 
     B = len(collated_global_crops)
     N = n_tokens
+    # --------------------------------------------------------
+    # NEW: compute valid patches (near-empty patches are invalid)
+    # --------------------------------------------------------
+    valid_patches = None
+    if (mask_generator is not None) and (n_tokens is not None):
+        # This computes which patch tokens correspond to "real signal"
+        # based on non-zero pixel fraction in the global crops.
+        valid_patches = compute_valid_patches_from_crops(
+            collated_global_crops,
+            n_tokens=N,
+            patch_size=patch_size,
+            min_nonzero_frac=0.02,  # <- tune this threshold
+            eps=0.0,
+        )  # (B, N) bool
+
+    # --------------------------------------------------------
+    # Original mask generation
+    # --------------------------------------------------------
     n_samples_masked = int(B * mask_probability)
     probs = torch.linspace(*mask_ratio_tuple, n_samples_masked + 1)
     upperbound = 0
@@ -34,8 +92,26 @@ def collate_data_and_cast(samples_list, mask_ratio_tuple, mask_probability, dtyp
     random.shuffle(masks_list)
 
     collated_masks = torch.stack(masks_list).flatten(1)
-    mask_indices_list = collated_masks.flatten().nonzero().flatten()
 
+    # --------------------------------------------------------
+    # NEW: zero out masks on invalid (near-empty) patches
+    # --------------------------------------------------------
+    #  if valid_patches is not None:
+    #      # make sure we're on same device
+    #      valid_patches = valid_patches.to(collated_masks.device)
+    #      collated_masks = collated_masks & valid_patches  # (B, N) bool
+    #
+    #      # OPTIONAL: ensure each sample has at least one masked patch
+    #      # (otherwise some rows could be all-False for very sparse images)
+    #      for b in range(B):
+    #          if not collated_masks[b].any():
+    #              # fallback: mask the most "occupied" patch
+    #              idx = valid_patches[b].float().argmax()
+    #              collated_masks[b, idx] = True
+    #
+    # Recompute indices and weights AFTER filtering
+
+    mask_indices_list = collated_masks.flatten().nonzero().flatten()
     masks_weight = (1 / collated_masks.sum(-1).clamp(min=1.0)).unsqueeze(-1).expand_as(collated_masks)[collated_masks]
 
     return {

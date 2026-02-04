@@ -90,7 +90,7 @@ class CVNDataset(Dataset):
         # # self.classes = ['numuCC', 'nueCC', 'nc']
         # self.classes = self.cand_flavs
 
-        self.cand_flavs = ["nu", "nue", "nutau"]
+        self.cand_flavs = ["nu", "nue"]#, "nutau"]
         self.entries = []
         for flav in self.cand_flavs:
             folder_name = f'prodgenie_dunevd_1x8x6_{flav}/cvn_gaushit'
@@ -104,9 +104,16 @@ class CVNDataset(Dataset):
                 # print(subdir)
                 for gz in sorted(glob(os.path.join(subdir, "event*.gz"))):
                     key = os.path.splitext(os.path.basename(gz))[0].replace("event", "")
-                    self.entries.append((flav, key, gz)) # since self.__getitem__ only uses gz, we can include the .info here and 
-        self.classes = self.cand_flavs
-        self.classes.append('nc')
+                    target = self.get_eventinfo(gz.replace('.gz', '.info'))
+                    nuPDG = target["NuPDG"]
+                    if nuPDG == -1:
+                        continue  # skip unrecognized
+                    # if nuPDG == 2:  # skip nc 
+                    #     continue
+                    self.entries.append((nuPDG, key, gz)) # since self.__getitem__ only uses gz, we can include the .info here and 
+        # self.classes = self.cand_flavs
+        # self.classes.append('nc')
+        self.classes = ['numu', 'nue', 'nc']
         #                                                                                             # 1) ignore it for test, 
         #                                                                                             # 2) return it to select specific information,
         #                                                 ## it looks like the info we need should be assigned to the target variable.
@@ -185,7 +192,14 @@ class CVNDataset(Dataset):
         ret = {}
         with open(path, 'rb') as info_file:
             info = info_file.readlines()
-            ret['NuPDG'] = int(info[7].strip())
+            nuPDG = abs(int(info[7].strip()))
+            ret['NuPDG'] = -1
+            if nuPDG == 14:
+                ret['NuPDG'] = 0
+            if nuPDG == 12:
+                ret['NuPDG'] = 1
+            if nuPDG == 1:
+                ret['NuPDG'] = 2
             ret['NuEnergy'] = float(info[1])
             ret['LepEnergy'] = float(info[2])
             ret['Interaction'] = int(info[0].strip()) % 4
@@ -197,20 +211,19 @@ class CVNDataset(Dataset):
         return ret
     
     def __getitem__(self, idx):
-        _, _, gz = self.entries[idx]
+        label, _, gz = self.entries[idx]
         arr = self._read_array(gz)
         img = self._to_pil(arr)
-        # convert_to_tensor = transforms.ToTensor()
-        convert_to_tensor = transforms.Compose([
-            transforms.ToTensor(),
-        ])
-        img_original = convert_to_tensor(self._to_original_pil(arr))
-        # target = 0  # dummy label for SSL
-        target = self.get_eventinfo(gz.replace('.gz', '.info'))
+
+        # convert_to_tensor = transforms.Compose([
+        #     transforms.ToTensor(),
+        # ])
+        # img_original = convert_to_tensor(self._to_original_pil(arr))
         if self.transform is not None:
             img = self.transform(img)
         if self.target_transform is not None:
             target = self.target_transform(target)
+
         # print(f"TARGET VALUE : {target}")
         ## Try to predict flavor first. Later we can try to predict other things from the info file.        
         # target = self.cand_flavs.index(self.entries[idx][0])  # convert flavor to index
@@ -218,17 +231,17 @@ class CVNDataset(Dataset):
         ##
         ## Try to predict the NuPDG
         # target = self.pdgs.index(target['NuPDG'])  # convert NuPDG to index
-        label = None
-        if target['NuPDG'] in [14, -14]:   # numuCC
-            label = 0
-        elif target['NuPDG'] in [12, -12]: # nueCC
-            label = 1
+        # label = None
+        # if target['NuPDG'] in [14, -14]:   # numuCC
+        #     label = 0
+        # elif target['NuPDG'] in [12, -12]: # nueCC
+        #     label = 1
         # elif target['NuPDG'] in [1]:                             # NC
-        #     target = 2
-        elif target['NuPDG'] in [16, -16]: # nutauCC
-            label = 2
-        elif target['NuPDG'] in [1]:   # NC
-            label = 3
+        #     label = 2
+        # # elif target['NuPDG'] in [16, -16]: # nutauCC
+        # #     label = 2
+        # # elif target['NuPDG'] in [1]:   # NC
+        # #     label = 3
         return img, label#, img_original  # return original image for visualization
     
 

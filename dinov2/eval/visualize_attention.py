@@ -60,15 +60,19 @@ def _read_array(gz_path, swap_axes=False, plane='Z'):
         img = np.repeat(plane[..., None], 3, axis=2)           # (H,W,3)
         return Image.fromarray(img, mode="RGB")
 
-def get_attn(model: nn.Module, eval_gz_path: str, iteration: int=None, duringTraining=True, eval_output_dir: str=None, sumoverheads: bool=False):
+def get_attn(model: nn.Module, eval_gz_path: str=None, iteration: int=None, duringTraining=True, eval_output_dir: str=None, 
+             sumoverheads: bool=False, image_size: int=500, patch_size: int=14, event=None):
     eval_output_dir = "attn/" if eval_output_dir is None else eval_output_dir
-    image_size = (500, 500)
-    patch_size = 14
-    event           = _read_array(gz_path=eval_gz_path)
-    image_size      = tuple(image_size)
-    output_dir      = eval_output_dir + f'/{iteration:06d}/' if iteration is not None else eval_output_dir + '/eval/'
-    if iteration is None:
-        output_dir += os.path.basename(eval_gz_path).replace('.gz','')
+
+    if eval_gz_path is not None:
+        event           = _read_array(gz_path=eval_gz_path)
+        output_dir      = eval_output_dir + f'/{iteration:06d}/' if iteration is not None else eval_output_dir + '/eval/'
+        if iteration is None:
+            output_dir += os.path.basename(eval_gz_path).replace('.gz','')
+    # image_size = (500, 500)
+    # patch_size = 14
+    # event           = _read_array(gz_path=eval_gz_path)
+    image_size      = tuple((image_size, image_size))
     patch_size      = patch_size
 
     device          = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -78,13 +82,17 @@ def get_attn(model: nn.Module, eval_gz_path: str, iteration: int=None, duringTra
     model.eval()
 
     img0 = event
-    transform = pth_transforms.Compose([
-            pth_transforms.Resize(image_size),
-            pth_transforms.ToTensor(),
-            pth_transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-        ])
-    img = transform(img0)
-
+    print(f"Original image size: {img0.shape}")
+    if eval_gz_path is not None:
+        transform = pth_transforms.Compose([
+                pth_transforms.Resize(image_size),
+                pth_transforms.ToTensor(),
+                pth_transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+            ])
+        img = transform(img0)
+    else:
+        img = img0
+    print(f"Transformed image size: {img.shape}")
     # make the image divisible by the patch size
     w, h = img.shape[1] - img.shape[1] % patch_size, img.shape[2] - img.shape[2] % patch_size
     img = img[:, :w, :h].unsqueeze(0)
@@ -101,6 +109,11 @@ def get_attn(model: nn.Module, eval_gz_path: str, iteration: int=None, duringTra
     attentions = attentions.reshape(nh, w_featmap, h_featmap)
     attentions = nn.functional.interpolate(attentions.unsqueeze(0), scale_factor=patch_size, mode="nearest")[0].cpu().detach().numpy()
 
+    if eval_gz_path is None:
+        print(f'attentions shape: {attentions.shape}')
+        attention = np.sum(attentions, axis=0)
+        return attention
+    
     ## Get neutrino flavor from main folder and the filename as well.
     attn_sumheads_name = 'attn_sumheads.png'
     event_img_name = 'event.png'
@@ -110,6 +123,7 @@ def get_attn(model: nn.Module, eval_gz_path: str, iteration: int=None, duringTra
     event_img_name = useful_name + '-' + event_img_name
     attn_sumheads_name = useful_name + '-' + attn_sumheads_name
     overlay_img_name = useful_name + '-' + overlay_img_name
+
     # sum over heads
     if sumoverheads:
         # save attentions heatmaps

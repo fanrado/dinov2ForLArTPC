@@ -28,7 +28,7 @@ class CVNDataset(Dataset):
         # -------------------------------
         # Accept comma-separated K=V pairs, e.g. extra="plane=Z,mono=mono3,swap_axes=1"
         self.plane = None       # 'U','V','Z','0','1','2' -> choose single plane; None -> use all 3
-        self.mono = "mono3"     # 'mono3' (replicate single plane to 3ch) | 'mono1' (true 1ch 'L' image), mono1 is actually not implemented, it requires changing the model which I think will be done anyway, so just keep config for now
+        self.mono = "mono1"     # 'mono3' (replicate single plane to 3ch) | 'mono1' (true 1ch 'L' image), mono1 is actually not implemented, it requires changing the model which I think will be done anyway, so just keep config for now
         extra = kwargs.get("extra", None)
         if isinstance(extra, str):
             for token in extra.split(","):

@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import re
 
-input_dir = '/nfs/data/1/nitish/dino_output/cvn_properrun/'
+input_dir = '/nfs/data/1/nitish/dino_output/cvn_properrun_1gpu/'
 out_dir = input_dir+'plots/'
 
 f_train_metrics = input_dir + 'training_metrics.json'

@@ -1,5 +1,4 @@
-#!/bin/bash
-# from the repo root
+# # from the repo root
 # export PYTHONPATH=.
 
 # pick two GPUs
@@ -11,15 +10,15 @@ export CUDA_VISIBLE_DEVICES=1
 # accum_iter isn't actually doing anything right now, TODO : get it working
 torchrun --standalone --nproc_per_node=1 \
   dinov2/train/train.py \
-  --config-file dinov2/configs/train/vitl16_short.yaml \
-  --output-dir /nfs/data/1/nitish/dino_output/cvn_properrun3 \
-  train.dataset_path="CVN:root=/nfs/data/1/rrazakami/work/data_cvn/data/dune/2023_trainings/latest/dunevd:extra=plane=Z,mono=mono3" \
+  --config-file dinov2/configs/ssl_my_config.yaml \
+  --output-dir /nfs/data/1/nitish/dino_output/cvn_minkunet \
+  train.dataset_path="CVN:root=/nfs/data/1/rrazakami/work/data_cvn/data/dune/2023_trainings/latest/dunevd:extra=plane=Z,mono=mono1" \
   train.num_workers=2 \
-  crops.global_crops_size=224 crops.local_crops_size=96 crops.local_crops_number=8 student.patch_size=16 \
-  train.batch_size_per_gpu=64 \
-  model.mixed_precision.param_dtype=bf16 model.mixed_precision.reduce_dtype=bf16 model.mixed_precision.buffer_dtype=bf16 \
-  train.autocast_dtype=bf16 \
+  crops.global_crops_size=400 crops.local_crops_size=100 crops.local_crops_number=8 student.patch_factor=4 \
+  train.batch_size_per_gpu=64 train.accum_iter=4 \
+  model.mixed_precision.param_dtype=fp32 model.mixed_precision.reduce_dtype=fp32 model.mixed_precision.buffer_dtype=fp32 \
+  train.autocast_dtype=fp32 \
   fsdp.use_fsdp=false model.use_fsdp=false train.use_fsdp=false \
   dino.koleo_loss_weight=0.02 optim.base_lr=0.0002 optim.clip_grad=2.0 \
-  optim.adamw_beta2=0.99 student.drop_path_rate=0.1 student.arch=vit_base \
+  optim.adamw_beta2=0.99 student.drop_path_rate=0.1 student.arch=minkunet \
   ibot.separate_head=true

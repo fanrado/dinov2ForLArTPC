@@ -6,6 +6,7 @@
 import logging
 from . import vision_transformer as vits
 from .unet_autoencoder_adapter import UNetAutoencoderAdapter   # <-- NEW
+from .minkunet_attention import MinkUNetSparseAttention125
 
 logger = logging.getLogger("dinov2")
 
@@ -34,7 +35,15 @@ def build_model(args, only_teacher=False, img_size=224):
         embed_dim = student.embed_dim
         return student, teacher, embed_dim
     # ----------------------------------------------------
-
+    if args.arch == "minkunet":
+        patch_factor = getattr(args, "patch_factor", 4)
+        embed_dim = 64
+        teacher = MinkUNetSparseAttention125(patch_factor=patch_factor)
+        if only_teacher:
+            return teacher, embed_dim
+        student = MinkUNetSparseAttention125(patch_factor=patch_factor)
+        return student, teacher, embed_dim
+    # ----------------------------------------------------
     if "vit" in args.arch:
         vit_kwargs = dict(
             img_size=img_size,

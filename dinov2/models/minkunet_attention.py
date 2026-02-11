@@ -115,8 +115,10 @@ class MinkUNetSparseAttention(nn.Module):
         # ============ BOTTLENECK (Sparse Attention at 125×125) ============
         out = self.bottleneck(out)              # [B,64,125,125] -> [B,128,125,125] (attention) -> [B,64,125,125]
         if self.patch_factor == 4:
-            d_out = out.to_dense(channel_dim=1, spatial_shape=ds_img_size).permute(0, 2, 3, 1)  # [B,64,125,125] dense tensor
-            dino_dict["x_norm_patchtokens"] = self.patch_head(d_out).permute(0, 3, 1, 2)
+            d_out = out.to_dense(channel_dim=1, spatial_shape=ds_img_size).permute(0, 2, 3, 1) # [B,64,125,125] dense tensor
+            B, Hp, Wp, D = d_out.shape
+            patches = d_out.reshape(B, Hp * Wp, D)
+            dino_dict["x_norm_patchtokens"] = self.patch_head(patches)
         # ============ DECODER ============
 
         # Stage 1: 125×125 to 250×250
@@ -124,8 +126,10 @@ class MinkUNetSparseAttention(nn.Module):
         out = cat(out, out_b1p2)                # [B,64,250,250] + [B,32,250,250] = [B,96,250,250]
         out = self.block6(out)                  # Process to [B,64,250,250]
         if self.patch_factor == 2:
-            d_out = out.to_dense(channel_dim=1, spatial_shape=ds_img_size).permute(0, 2, 3, 1)  # [B,64,250,250] dense tensor
-            dino_dict["x_norm_patchtokens"] = self.patch_head(d_out).permute(0, 3, 1, 2)
+            d_out = out.to_dense(channel_dim=1, spatial_shape=ds_img_size).permute(0, 2, 3, 1) # [B,64,250,250] dense tensor
+            B, Hp, Wp, D = d_out.shape
+            patches = d_out.reshape(B, Hp * Wp, D)
+            dino_dict["x_norm_patchtokens"] = self.patch_head(patches)
 
         # Stage 2: 250×250 to 500×500 (full resolution)
         out = self.convtr7(out, out_p1)         # Upsample
@@ -139,7 +143,10 @@ class MinkUNetSparseAttention(nn.Module):
         out_dense = out.to_dense(channel_dim=1, spatial_shape=img_size)  # [B,64,500,500] dense tensor
         dino_dict["x_norm_clstoken"] = self.cls_head(out_dense)
         if self.patch_factor == 1:
-            dino_dict["x_norm_patchtokens"] = self.patch_head(out_dense.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+            d_out = out_dense.permute(0, 2, 3, 1)
+            B, Hp, Wp, D = d_out.shape
+            patches = d_out.reshape(B, Hp * Wp, D)
+            dino_dict["x_norm_patchtokens"] = self.patch_head(patches)
         if is_training:
             return dino_dict
         else:

@@ -364,6 +364,15 @@ def main(args):
             r"cls_token",        # global token
             r"blocks\.0\._fsdp_wrapped_module\.([0-9]+)\.attn",  # first block's attention
             r"blocks\.([0-9]+)\._fsdp_wrapped_module\.23\.attn",  # last block's attention
+            # sparse conv
+            r"final\.patch_head",
+            r"final\.cls_head",
+            r"bottleneck\.attn",
+            r"conv0",
+            r"block1",
+            r"block2",
+            r"block6",
+            r"block8",
         ],
         max_points = 10000
     )

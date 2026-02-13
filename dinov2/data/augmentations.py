@@ -41,6 +41,7 @@ class DataAugmentationDINO(object):
         logger.info("###################################")
 
         supervised_learning = True if (self.local_crops_number is None or self.local_crops_scale is None) else False
+        print('----------\n Supervised learning: ', supervised_learning, '\n----------')
         if supervised_learning:
             ## Center crop in order to train a linear classifier on top of DINOv2 features
             self.resize_image = transforms.Compose(
@@ -49,7 +50,6 @@ class DataAugmentationDINO(object):
                     ## Instead of center crop, let's resize the image
                     transforms.Resize(global_crops_size, interpolation=transforms.InterpolationMode.BICUBIC),
                     transforms.ToTensor(),
-
                 ]
             )
         else:

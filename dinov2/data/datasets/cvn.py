@@ -44,12 +44,15 @@ class CVNDataset(Dataset):
                  swap_axes=False,          
                  transform=None,
                  target_transform=None,
+                 classification_type=None, ## Add classification_type argument to select the output target variable for from the dataset
                  **kwargs):
         self.root = root
         self.split = split
         self.swap_axes = bool(swap_axes)
         self.transform = transform
         self.target_transform = target_transform
+        self.classification_type = classification_type ## Store classification_type for later use in __getitem__
+        ### classification_type can be : 'flavor_2' for numu vs nue, 'flavor_3' for numu vs nue vs nc, 'ntracks' for (0, 1, 2, 3+) tracks, 'nshowers' for (0, 1, 2, 3+) showers.
 
         # -------------------------------
         # Parse optional flags from :extra=
@@ -108,23 +111,21 @@ class CVNDataset(Dataset):
                     nuPDG = target["NuPDG"]
                     if nuPDG == -1:
                         continue  # skip unrecognized
-                    # if nuPDG == 2:  # skip nc 
-                    #     continue
-                    self.entries.append((nuPDG, key, gz)) # since self.__getitem__ only uses gz, we can include the .info here and 
+                    if self.classification_type != 'flavor_3':
+                        if nuPDG == 2:  # skip nc 
+                            continue
+                    self.entries.append((nuPDG, target['ntracks'], target['nshowers'], key, gz)) # since self.__getitem__ only uses gz, we can include the .info here and 
         # self.classes = self.cand_flavs
         # self.classes.append('nc')
-        self.classes = ['numu', 'nue', 'nc']
-        #                                                                                             # 1) ignore it for test, 
-        #                                                                                             # 2) return it to select specific information,
-        #                                                 ## it looks like the info we need should be assigned to the target variable.
-        # print("=============================== LENGTH OF DATASET : -------========" )
-        # print(len(self.entries))
-        # print(self.entries[0])
-        # print('================================')
-        # print('================================')
-        # sys.exit()
-        # self.classes = self.cand_flavs
-        # self.classes[0] = 'numu'
+        if self.classification_type == 'ntracks':
+            self.classes = ['0', '1', '2', '3+']
+        elif self.classification_type == 'nshowers':
+            self.classes = ['0', '1', '2', '3+']
+        elif self.classification_type == 'flavor_2':
+            self.classes = ['numu', 'nue']#, 'nc']
+        elif self.classification_type == 'flavor_3':
+            self.classes = ['numu', 'nue', 'nc']
+ 
         if not self.entries:
             raise RuntimeError(f"No .gz files found under {root}/<flavor>/event*.gz")
     
@@ -207,11 +208,23 @@ class CVNDataset(Dataset):
             ret['NPion'] = int(info[9].strip())
             ret['NPiZero'] = int(info[10].strip())
             ret['NNeutron'] = int(info[11].strip())
+            ## Add ntracks and nshowers which are commonly used for CVN classification tasks. For now, not include neutrons
+            ntracks = 0
+            nshowers = 0
+            if nuPDG == 14:
+                ntracks += 1
+            if nuPDG == 12:
+                nshowers += 1
+            ntracks += int(info[8].strip())  # NProton
+            ntracks += int(info[9].strip())  # NPion
+            nshowers += int(info[10].strip())  # NPiZero
+            ret['ntracks'] = ntracks
+            ret['nshowers'] = nshowers
             #ret['OscWeight'] = float(info[6])
         return ret
     
     def __getitem__(self, idx):
-        label, _, gz = self.entries[idx]
+        label, ntracks, nshowers, key, gz = self.entries[idx]
         arr = self._read_array(gz)
         img = self._to_pil(arr)
 
@@ -219,30 +232,17 @@ class CVNDataset(Dataset):
         #     transforms.ToTensor(),
         # ])
         # img_original = convert_to_tensor(self._to_original_pil(arr))
+        target = label
         if self.transform is not None:
             img = self.transform(img)
         if self.target_transform is not None:
             target = self.target_transform(target)
 
-        # print(f"TARGET VALUE : {target}")
-        ## Try to predict flavor first. Later we can try to predict other things from the info file.        
-        # target = self.cand_flavs.index(self.entries[idx][0])  # convert flavor to index
-        # print(f'type(target) : {type(target)}')
-        ##
-        ## Try to predict the NuPDG
-        # target = self.pdgs.index(target['NuPDG'])  # convert NuPDG to index
-        # label = None
-        # if target['NuPDG'] in [14, -14]:   # numuCC
-        #     label = 0
-        # elif target['NuPDG'] in [12, -12]: # nueCC
-        #     label = 1
-        # elif target['NuPDG'] in [1]:                             # NC
-        #     label = 2
-        # # elif target['NuPDG'] in [16, -16]: # nutauCC
-        # #     label = 2
-        # # elif target['NuPDG'] in [1]:   # NC
-        # #     label = 3
-        return img, label#, img_original  # return original image for visualization
+        if self.classification_type == 'ntracks':
+            return img, ntracks
+        elif self.classification_type == 'nshowers':
+            return img, nshowers
+        return img, label # return original image for visualization
     
 
 

@@ -220,6 +220,11 @@ class CVNDataset(Dataset):
             nshowers += int(info[10].strip())  # NPiZero
             ret['ntracks'] = ntracks
             ret['nshowers'] = nshowers
+            ## Cap ntracks and nshowers at 3+ for classification purposes. The value 3 will represent 3 or more tracks/showers, which is a common practice in CVN classification tasks to avoid having too many classes with very few samples.
+            if ret['ntracks'] >= 3:
+                ret['ntracks'] = 3
+            if ret['nshowers'] >= 3:
+                ret['nshowers'] = 3
             #ret['OscWeight'] = float(info[6])
         return ret
     

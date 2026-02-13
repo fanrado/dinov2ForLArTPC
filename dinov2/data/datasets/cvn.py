@@ -111,6 +111,15 @@ class CVNDataset(Dataset):
                     nuPDG = target["NuPDG"]
                     if nuPDG == -1:
                         continue  # skip unrecognized
+                    ##--
+                    ## Uncomment this block if you want to do ntracks or nshowers classification instead of flavor classification. For ntracks classification, we will skip nue events and only classify numuCC events based on their number of tracks. For nshowers classification, we will skip numu events and only classify nueCC events based on their number of showers. For flavor_3 classification, we will include all events and classify them into numu, nue, and nc based on their PDG code.
+                    # if self.classification_type == 'ntracks':
+                    #     if nuPDG == 12: # skip nue, select numuCC only
+                    #         continue
+                    # elif self.classification_type == 'nshowers':
+                    #     if nuPDG == 14: # skip numu, select nueCC only
+                    #         continue
+                    ##--
                     if self.classification_type != 'flavor_3':
                         if nuPDG == 2:  # skip nc 
                             continue

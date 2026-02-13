@@ -75,6 +75,7 @@ def make_dataset(
     dataset_str: str,
     transform: Optional[Callable] = None,
     target_transform: Optional[Callable] = None,
+    classification_type: Optional[str] = None, ## Add classification_type argument to select the output target variable for from the dataset
 ):
     """
     Creates a dataset with the specified parameters.
@@ -90,7 +91,7 @@ def make_dataset(
     logger.info(f'using dataset: "{dataset_str}"')
 
     class_, kwargs = _parse_dataset_str(dataset_str)
-    dataset = class_(transform=transform, target_transform=target_transform, **kwargs)
+    dataset = class_(transform=transform, target_transform=target_transform, classification_type=classification_type, **kwargs) ## Pass classification_type to the dataset constructor
 
     logger.info(f"# of dataset samples: {len(dataset):,d}")
 

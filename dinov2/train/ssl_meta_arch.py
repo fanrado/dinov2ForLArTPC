@@ -191,14 +191,18 @@ class SSLMetaArch(nn.Module):
         # plt.close(fig)
         # sys.exit()
         local_crops = images["collated_local_crops"].cuda(non_blocking=True)
+        # print(f'Local crops shape: {local_crops.shape}')
 
         masks = images["collated_masks"].cuda(non_blocking=True)
+        # print('Masks shape: ', masks.shape)
+
         mask_indices_list = images["mask_indices_list"].cuda(non_blocking=True)
         n_masked_patches_tensor = images["n_masked_patches"].cuda(non_blocking=True)
         n_masked_patches = mask_indices_list.shape[0]
         upperbound = images["upperbound"]
         masks_weight = images["masks_weight"].cuda(non_blocking=True)
 
+        print(f'Number of masked patches: {n_masked_patches}')
         n_local_crops_loss_terms = max(n_local_crops * n_global_crops, 1)
         n_global_crops_loss_terms = (n_global_crops - 1) * n_global_crops
 
@@ -215,27 +219,10 @@ class SSLMetaArch(nn.Module):
             x, n_global_crops_teacher = global_crops, n_global_crops
             # print('---------Get teacher output ------')
             # print(f'Global crops shape : {x.shape} ::::: Global crops;----; Global crops number: {n_global_crops_teacher}')
-            # sys.exit()
+            # # sys.exit()
+            # print(f'Passing global crops through teacher backbone...')
+            # print(f'Global crops shape before teacher backbone: {x.shape}')
             teacher_backbone_output_dict = self.teacher.backbone(x, is_training=True)  # teacher backbone outputs (dict of tokens)
-            ########## DEBUGGING OUTPUTS ############
-            # print(f'Teacher backbone output keys: {teacher_backbone_output_dict.keys()}')
-            # print(f'Teacher backbone output cls token shape: {teacher_backbone_output_dict["x_norm_clstoken"].shape}')
-            # print(f'Teacher backbone output patch token shape: {teacher_backbone_output_dict["x_norm_patchtokens"].shape}')
-            # print(f'Teacher backbone x prenorm shape: {teacher_backbone_output_dict["x_prenorm"].shape}')
-            # print(f'Teacher backbone masks: {teacher_backbone_output_dict["masks"]}')
-            # print(f'Teacher backbone output patch token example : {teacher_backbone_output_dict["x_norm_patchtokens"][:, 0]}')
-            # tokens = teacher_backbone_output_dict["x_norm_patchtokens"]
-            # batch_size = tokens.shape[0]
-            # tokens_spatial = tokens.reshape(batch_size, 14,14, 1024)
-            # fig, axes = plt.subplots(2,4,figsize=(16,8))
-            # for i, ax in enumerate(axes.flat):
-            #     ax.imshow(tokens_spatial[0, :, :, i].cpu().numpy(), cmap='viridis')
-            #     ax.set_title(f'Channel {i}')
-            #     ax.axis('off')
-            # plt.tight_layout()
-            # plt.savefig('/nfs/data/1/rrazakami/work/dinov2ForLArTPC/tests/imagesDINO/teacher_patch_tokens_example.png')
-            # plt.close(fig)
-            # sys.exit()
             ########## ######## ############
             teacher_cls_tokens = teacher_backbone_output_dict["x_norm_clstoken"]  # teacher CLS tokens before head
             teacher_cls_tokens = teacher_cls_tokens.chunk(n_global_crops_teacher)
@@ -324,7 +311,7 @@ class SSLMetaArch(nn.Module):
         # 1b: global crops cls tokens
         student_global_cls_tokens = student_global_backbone_output_dict["x_norm_clstoken"]  # student global CLS before head
         inputs_for_student_head_list.append(student_global_cls_tokens.unsqueeze(0))
-        print(f'Student global cls tokens shape: {student_global_cls_tokens.shape}')
+        # print(f'Student global cls tokens shape: {student_global_cls_tokens.shape}')
         # 1c: global crops patch tokens
         if do_ibot:
             _dim = student_global_backbone_output_dict["x_norm_clstoken"].shape[-1]

@@ -178,9 +178,9 @@ def do_train(cfg, model, resume=False):
     )
 
     data_transform = DataAugmentationDINO(
-        cfg.crops.global_crops_scale,
-        cfg.crops.local_crops_scale,
-        cfg.crops.local_crops_number,
+        global_crops_scale=cfg.crops.global_crops_scale,
+        local_crops_scale=cfg.crops.local_crops_scale,
+        local_crops_number=cfg.crops.local_crops_number,
         global_crops_size=cfg.crops.global_crops_size,
         local_crops_size=cfg.crops.local_crops_size,
     )
@@ -196,15 +196,15 @@ def do_train(cfg, model, resume=False):
         dtype=inputs_dtype,
     )
 
-    os.system('clear')
+    # os.system('clear')
     # setup data loader
     target_transform = lambda x:x  # return the target as is. This should return 0
     dataset = make_dataset(
         dataset_str=cfg.train.dataset_path,
         transform=data_transform, ## Not needed if we use the targets. ==> supervised learning
-        # target_transform=lambda _: (),
+        target_transform=lambda _: (),
         # target_transform=lambda x:x, # return the target as is. This should return 0
-        target_transform=target_transform,
+        # target_transform=target_transform,
     )
 
     print('============== DATASET ==============')
@@ -255,9 +255,9 @@ def do_train(cfg, model, resume=False):
         max_iter,
         start_iter,
     ):
-        print('--- New iteration ---')
-        print("LOADED DATA : ", data[1])
-        sys.exit()
+        # print('--- New iteration ---')
+        # print("LOADED DATA : ", data[1])
+        # sys.exit()
 
         torch.cuda.synchronize()
         data_time_ = time.time() - end_prep_time
@@ -265,7 +265,7 @@ def do_train(cfg, model, resume=False):
         torch.cuda.reset_peak_memory_stats()
         t0 = time.time()
         current_batch_size = data["collated_global_crops"].shape[0] / 2
-        # print(f'Batch size : {current_batch_size}')
+        print(f'Batch size : {current_batch_size}')
         # continue
         if iteration > max_iter:
             return
@@ -281,7 +281,8 @@ def do_train(cfg, model, resume=False):
         # print(f'Learning rate: {lr:.6f}, Weight decay: {wd:.6f}, Momentum: {mom:.6f}, Teacher temp: {teacher_temp:.6f}, Last layer lr: {last_layer_lr:.6f}')
         # sys.exit()
         # compute losses
-
+        print('Forward and backward pass ...')
+        print(f'Data shape: {data["collated_global_crops"].shape}')
         optimizer.zero_grad(set_to_none=True)
         loss_dict = model.forward_backward(data, teacher_temp=teacher_temp)
 
@@ -335,9 +336,9 @@ def do_train(cfg, model, resume=False):
         t1 = time.time() - t0 + data_time_
 
         ## Get attention maps and save them
-        if iteration%50 == 0:
-            eval_gz_path = '/nfs/data/1/rrazakami/work/data_cvn/data/dune/2023_trainings/latest/dunevd/prodgenie_dunevd_1x8x6_nue/cvn_gaushit/72787986_732/event_r943_s1_e20520_h1695837055.gz'
-            get_attn(model.student.backbone, iteration, eval_gz_path)
+        # if iteration%50 == 0:
+        #     eval_gz_path = '/nfs/data/1/rrazakami/work/data_cvn/data/dune/2023_trainings/latest/dunevd/prodgenie_dunevd_1x8x6_nue/cvn_gaushit/72787986_732/event_r943_s1_e20520_h1695837055.gz'
+        #     get_attn(model.student.backbone, iteration, eval_gz_path)
         ## End of getting attention maps
         
         # peak_memory = torch.cuda.max_memory_allocated() / (1024.0 ** 3)  # in GB

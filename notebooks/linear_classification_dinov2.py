@@ -35,11 +35,12 @@ from torchvision.io import read_image
 from torchvision.transforms import v2
 from torchvision.models.feature_extraction import create_feature_extractor
 from dinov2.models.vision_transformer import vit_small, vit_base, vit_large
-
+from dinov2.eval.visualize_attention import get_attn
 
 # In[61]:
 
-
+import time
+start_time = time.time()
 print(f'torch version: {torch.__version__}')
 print(f'torchvision version: {torchvision.__version__}')
 
@@ -190,13 +191,15 @@ if BACKBONE=='dinov2':
     # pth_model = torch.load('../out_cvn_memlite_batchpergpu_16/model_final.rank_0.pth')
     pth_model = torch.load('/nfs/data/1/nitish/dino_output/cvn_properrun_1gpu/model_final.rank_0.pth')
     backbone_model.load_state_dict(pth_model, strict=False)
+    print(f'block chunk : {backbone_model.chunked_blocks}')
+    print(f'Backbone model : {backbone_model}')
     feature_model = ModelWithIntermediateLayers(backbone_model, n_last_blocks=model_config['use_nblocks'])
     embed_dim = backbone_model.embed_dim * (model_config['use_nblocks'] + int(model_config['use_avgpool']))
     print(f'Feature dimension: {embed_dim}')
 feature_model = feature_model.to(device)
 
-print(feature_model)
-
+print(f'Feature model: {feature_model}')
+# sys.exit()
 # ### Creating a linear classifier
 
 # In[73]:
@@ -238,12 +241,16 @@ class LinearClassifier(nn.Module):
     
     def forward(self, input):
         if self.use_dinov2:
-            output = create_linear_input(input, self.use_nblocks, self.use_avgpool)
-            return self.linear(output)
+            output = create_linear_input(input, self.use_nblocks, self.use_avgpool) # Get the cls token and append the average of the patch tokens to it
+            output = self.linear(output)
+            # output = nn.functional.softmax(output, dim=1)
+            return output
 
 linear_classifier = LinearClassifier(embed_dim, model_config, num_classes=3) # nu and nubar in the same class. No nutau
 linear_classifier = linear_classifier.to(device)
 
+print('Linear classifier:')
+print(linear_classifier)
 
 from dinov2.data import DataAugmentationDINO, SamplerType, make_data_loader, make_dataset
 from dinov2.data import MaskingGenerator, collate_data_and_cast
@@ -306,8 +313,8 @@ if LARGE_DATASET:
     
     from sklearn.model_selection import train_test_split
     total_size = len(datasets_full)
-    subset_size = 20000
-    # subset_size = 1000
+    # subset_size = 50000
+    subset_size = 1000
     print(f'Total number of samples in the dataset: {total_size}')
     print(f'Selecting a subset of size: {subset_size}')
 
@@ -348,16 +355,19 @@ if LARGE_DATASET:
     print(f'Number of test samples: {len(datasets_test)}')
 print(f'Classes: {datasets_train.dataset.classes}')
 
-# def nclasses_in_dataset(dataset):
-#     class_set = {'numu':0, 'nue':0, 'nc':0}
-#     for i in range(len(dataset)):
-#         _, label = dataset[i]
-#         class_name = dataset.classes[label]
-#         class_set[class_name] += 1
-#     return class_set
-# print(f'Classes in training set: {nclasses_in_dataset(datasets_train.dataset)}')
-# print(f'Classes in validation set: {nclasses_in_dataset(datasets_val.dataset)}')
-# print(f'Classes in test set: {nclasses_in_dataset(datasets_test.dataset)}')
+def nclasses_in_dataset(dataset):
+    class_set = {'numu':0, 'nue':0, 'nc':0}
+    # for i in range(len(dataset)):
+    #     _, label = dataset[i]
+    #     class_name = dataset.classes[label]
+    #     class_set[class_name] += 1
+    for _, label in dataset:
+        class_name = dataset.dataset.classes[label]
+        class_set[class_name] += 1
+    return class_set
+print(f'Classes in training set: {nclasses_in_dataset(datasets_train)}')
+print(f'Classes in validation set: {nclasses_in_dataset(datasets_val)}')
+print(f'Classes in test set: {nclasses_in_dataset(datasets_test)}')
 
 dataloaders = {
         'train': make_data_loader(
@@ -382,7 +392,8 @@ dataloaders = {
         )
     }
 
-# sys.exit()
+end_data_loading_time = time.time()
+print(f'Data loading time: {end_data_loading_time - start_time:.2f} seconds')
 
 def check_dataset(dataset, num_samples=100):
     import random
@@ -414,14 +425,9 @@ def show_batch(imgs, titles=None, rows=2, cols=4, figname=None):
         fig = plt.figure(figsize=(cols * 3, rows * 3))
     else:
         fig = plt.figure(figsize=(10,10))
-    # for i in range(imgs.size(0)):
-    # print(f'imgs.size() : {imgs.size()}')
-    # print(f'imgs.size(0) : {imgs.size(0)}')
-        # img = imgs[i].cpu().numpy().transpose((1, 2, 0))
+
     img = imgs[0].cpu().numpy().transpose((1,2,0))
     print(f'image shape : {img.shape}')
-    # img = img * std + mean  # unnormalize
-    # img = np.clip(img, 0, 1)
     i = 0
     ax = plt.subplot(rows, cols, i+1)
     ax.imshow(img[:, :, 0], cmap='viridis') ## just cmap='gray' doesn't change this to gray
@@ -450,14 +456,13 @@ def train_loop(dataloader, feature_model, linear_classifier, loss_fn, optimizer)
     running_corrects = 0
     for batch, (X,y) in enumerate(dataloader):
         print(f'Batch {batch+1}/{num_batches}', end='\r')
+        print(f'X shape : {X.shape}, y shape : {y.shape}')
         X = X.to(device)
         y = y.to(device)
         features = feature_model(X)
-        # f = features[0][0].cpu().numpy()
-        # features = feature_model.forward(X)
+        print(f'features length : {len(features)}, features[0] shape : {features[0][0].shape}')
         pred = linear_classifier(features)
-        # print(f'pred shape : {pred.shape}, values : {pred}')
-        # print(f'y shape : {y.shape}, values : {y}')
+        print(f'pred shape : {pred.shape}')
         loss = loss_fn(pred, y)
         # Backpropagation
         loss.backward()
@@ -498,13 +503,14 @@ def val_loop(dataloader, feature_model, linear_classifier, loss_fn):
     val_acc /= total_samples
     return val_acc, val_loss
 
-
-EPOCHS = 50
+start_training_time = time.time()
+print('\n\nStarting training...')
+EPOCHS = 100
 loss_fn = nn.CrossEntropyLoss()
 optimizer = torch.optim.SGD(
     linear_classifier.parameters(),
     # lr=cfg['optim']['base_lr'],
-    lr=0.01,
+    lr=0.005,
     momentum=0.9,
     weight_decay=0.0
 )
@@ -549,13 +555,15 @@ for t in range(EPOCHS): # epochs
         torch.save(save_dict, os.path.join(OUTPUT_DIR, 'linear_classifier_best.pth'))
     print('\n')
 print('Training completed.')
-
+end_training_time = time.time()
+print(f'Training time: {end_training_time - start_training_time:.2f} seconds, for {EPOCHS} epochs')
+print('\n\n')
 
 # ### Model information
 
 # In[95]:
 
-
+print(f'Plotting training curves completed and saved to {OUTPUT_DIR}/training_curves.png')
 import pandas as pd
 train_df = pd.DataFrame(train_data)
 train_df.to_csv(os.path.join(OUTPUT_DIR, 'training_log.csv'), index=False)
@@ -580,7 +588,6 @@ plt.savefig(os.path.join(OUTPUT_DIR, 'training_curves.png'))
 # plt.show()
 plt.close()
 
-
 # ### Visualization of predictions
 
 # In[96]:
@@ -592,12 +599,12 @@ print(class_names)
 # In[97]:
 
 
-def visualize_model(feature_model, linear_classifier, images,original_img=None, rows=2, cols=4, true_classes=None, batch_no=None):
+def visualize_model(feature_model, linear_classifier, images,original_img=None, rows=2, cols=4, true_classes=None, batch_no=None, backbone_model=None, PATCH_SIZE=16, IMG_SIZE=224):
     was_training = linear_classifier.training
     linear_classifier.eval()
     with torch.no_grad():
-        imgs = images.to(device)
-        # print(f'Input image shape: {imgs.shape}')
+        # img = img[np.newaxis, ...]
+        imgs = images[np.newaxis, ...].to(device)
         features = feature_model(imgs)
         outputs = linear_classifier(features)
         outputs = nn.functional.softmax(outputs, dim=1)
@@ -612,13 +619,43 @@ def visualize_model(feature_model, linear_classifier, images,original_img=None, 
     figname = f'output/predictions/predictions{class_names[preds[0]]}_true{class_names[true_classes]}_batch{batch_no}.png' if batch_no is not None else f'output/predictions/predictions{class_names[preds[0]]}_true{class_names[true_classes]}_batch.png'
     if original_img is not None:
         imgs = original_img
-    show_batch(imgs, titles=titles, rows=rows, cols=cols, figname=figname)
-    
+    if batch_no%2==0:
+        # Print test sample every 100 events
+        if backbone_model is not None:
+            print(f'images shape : {images.shape}')
+            print(f'type(images): {type(images)}')
+            # img = np.array(images)
+            print(f'img shape : {images.shape}')
+            print(f'type(img) : {type(images)}')
+            print('----Getting into get_attn function----')
+            img = images
+            attention = get_attn(model=backbone_model, event=img, patch_size=PATCH_SIZE, image_size=IMG_SIZE, sumoverheads=True)
+            fig = plt.figure(figsize=(10,10))
+            print(f'image shape : {img.shape}')
+            i = 0
+            ax = plt.subplot(rows, cols, i+1)
+            plt.imsave(fname=figname.replace('.png', '_image.png'), arr=img.cpu().numpy().transpose(1,2,0)[:, :, 0], format='png')
+            plt.imsave(fname=figname.replace('.png', '_attention.png'), arr=attention, format='png')
+
+            modified_img = Image.open(figname.replace('.png', '_image.png')).convert("RGBA")
+            attention_img = Image.open(figname.replace('.png', '_attention.png')).convert("L").resize(modified_img.size)
+            modified_img.paste(attention_img, (0,0), attention_img)
+
+            ax.set_title(titles[i])
+            ax.axis('off')
+            fig.tight_layout()
+            if figname is not None:
+                # plt.savefig(figname)
+                # plt.close()
+                modified_img.save(figname)
+        else:
+            show_batch(imgs, titles=titles, rows=rows, cols=cols, figname=figname)
     linear_classifier.train(mode=was_training)
     return figname, class_names[preds[0]], class_names[true_classes]
 
 
-
+start_test_time = time.time()
+print('Starting test set predictions and visualization...')
 predictions_dict = {
     'figname': [],
     'predicted_class': [],
@@ -626,8 +663,8 @@ predictions_dict = {
 }
 # for no, (img, label) in enumerate(datasets['test']):
 for no, (img, label) in enumerate(datasets_test):
-    img = img[np.newaxis, ...]
-    figname, predicted_class, true_class = visualize_model(feature_model=feature_model, linear_classifier=linear_classifier, images=img, original_img=None, true_classes=label, rows=1, cols=1, batch_no=no)
+    # img = img[np.newaxis, ...]
+    figname, predicted_class, true_class = visualize_model(feature_model=feature_model, linear_classifier=linear_classifier, images=img, original_img=None, true_classes=label, rows=1, cols=1, batch_no=no, backbone_model=backbone_model, PATCH_SIZE=PATCH_SIZE, IMG_SIZE=IMG_SIZE)
     predictions_dict['figname'].append(figname)
     predictions_dict['predicted_class'].append(predicted_class)
     predictions_dict['true_class'].append(true_class)
@@ -661,6 +698,9 @@ plt.savefig(os.path.join(OUTPUT_DIR, 'confusion_matrix.png'))
 # plt.show()
 plt.close()
 
+end_test_time = time.time()
+print(f'Test set predictions and visualization time: {end_test_time - start_test_time:.2f} seconds')
+print(f'Run time of the entire notebook: {end_test_time - start_time:.2f} seconds ==> {(end_test_time - start_time)/60:.2f} minutes')
 
 
 

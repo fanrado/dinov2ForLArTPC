@@ -35,7 +35,7 @@ def named_apply(fn: Callable, module: nn.Module, name="", depth_first=True, incl
     return module
 
 class BlockChunk(nn.ModuleList):
-    def forward(self, x, return_attention=True):
+    def forward(self, x, return_attention=False):
         if return_attention:
             for i, b in enumerate(self):
                 if i < len(self) - 1:
@@ -260,7 +260,7 @@ class DinoVisionTransformer(nn.Module):
     def forward_features(self, x, masks=None):
         if isinstance(x, list):
             return self.forward_features_list(x, masks)
-
+        print('Forward pass through the vision transformer backbone ...', 'Input shape: ', x.shape)
         x = self.prepare_tokens_with_masks(x, masks)
 
         for blk in self.blocks:
@@ -346,6 +346,7 @@ class DinoVisionTransformer(nn.Module):
         return tuple(outputs)
 
     def forward(self, *args, is_training=False, **kwargs):
+        print('Forward pass through the vision transformer ...')
         ret = self.forward_features(*args, **kwargs)
         if is_training:
             return ret

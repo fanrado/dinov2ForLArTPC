@@ -172,6 +172,18 @@ class LinearClassifierCVN(nn.Module):
                 dim=-1,
             )
             output = output.reshape(output.shape[0], -1)
+        ## Uncomment this block if you want to append all patch tokens from the last block instead of the average of the patch tokens. Note that this will significantly increase the input dimension for the linear classifier.
+        else:
+            #intermediate_output[-1][0] shape : (Batch_size, num_patches, embed_dim)
+            # reshape intermediate_output[-1][0] to (Batch_size, num_patches*embed_dim) and concatenate it to output
+            output = torch.cat(
+                (
+                    output,
+                    intermediate_output[-1][0].reshape(intermediate_output[-1][0].shape[0], -1) # reshape patch tokens to (Batch_size, num_patches*embed_dim)
+                ),
+                dim=-1,
+            )
+            # print(f'Shape of output after concatenating patch tokens : {output.shape}')
         return output.float()
 
     def forward(self, input):
@@ -239,7 +251,11 @@ def load_dinov2_backbone(config_dict, config_pretraining, device='cuda:0'):
     print(f'Backbone model : {backbone_model}')
 
     feature_model = ModelWithIntermediateLayers(backbone_model, n_last_blocks=config_dict['use_nblocks'])
-    embed_dim = backbone_model.embed_dim * (config_dict['use_nblocks'] + int(config_dict['use_avgpool']))
+    embed_dim = backbone_model.embed_dim * config_dict['use_nblocks']
+    if config_dict['use_avgpool']:
+        embed_dim = backbone_model.embed_dim * (config_dict['use_nblocks'] + int(config_dict['use_avgpool']))
+    else:
+        embed_dim = backbone_model.embed_dim * (config_dict['use_nblocks']+ int(config_dict['use_avgpool']) +(IMG_SIZE // PATCH_SIZE)**2)
     feature_model = feature_model.to(device)
     return feature_model, embed_dim
 
@@ -273,7 +289,11 @@ def train_loop(dataloader, feature_model, linear_classifier, loss_fn, optimizer,
         print(f'Batch {batch+1}/{num_batches}', end='\r')
         X = X.to(device)
         y = y.to(device)
-        features = feature_model(X)
+        features = None
+        if feature_model is not None:
+            features = feature_model(X)
+        else:
+            features = X
         pred = linear_classifier(features)
         loss = loss_fn(pred, y)
         # Backpropagation
@@ -308,7 +328,8 @@ def val_loop(dataloader, feature_model, linear_classifier, loss_fn, device):
             val_acc: the accuracy of the linear classifier on the validation set
             val_loss: the average loss of the linear classifier on the validation set
     '''
-    feature_model.eval()
+    if feature_model is not None:
+        feature_model.eval()
     linear_classifier.eval()
     total_samples = 0
     val_loss, val_acc = 0.0, 0.0
@@ -316,7 +337,11 @@ def val_loop(dataloader, feature_model, linear_classifier, loss_fn, device):
         for X, y in dataloader:
             X = X.to(device)
             y = y.to(device)
-            features = feature_model(X)
+            features = None
+            if feature_model is not None:
+                features = feature_model(X)
+            else:
+                features = X
             pred = linear_classifier(features)
             val_loss += loss_fn(pred, y).item()
             val_acc += (pred.argmax(1) == y).type(torch.float).sum().item()
@@ -345,6 +370,7 @@ def plot_training_curves(train_data, OUTPUT_DIR):
     line_acc_val, = ax1.plot(val_phase['epoch'], val_phase['accuracy'], 'r-', label='val acc')
     line_loss_train, = ax1.plot(train_phase['epoch'], train_phase['loss'], 'g--', label='train loss')
     line_loss_val, = ax1.plot(val_phase['epoch'], val_phase['loss'], 'r--', label='val loss')
+    # ax1.set_ylim(0, 1.5)
     ax1.set_xlabel('Epoch number')
     ax1.legend(loc='center right')
     ax1.set_title('Accuracy and cross entropy')
@@ -358,7 +384,7 @@ def plot_training_curves(train_data, OUTPUT_DIR):
     # plt.show()
     plt.close()
 
-def train(dataloaders, feature_model, linear_classifier, OUTPUT_DIR, EPOCHS=100, BATCH_SIZE=32, device='cuda'):
+def train(dataloaders=None, feature_model=None, linear_classifier=None, OUTPUT_DIR=None, EPOCHS=100, BATCH_SIZE=32, device='cuda'):
     '''
         Train the linear classifier using the training data and validate it using the validation data. This function orchestrates the entire training process, 
         including setting up the loss function, optimizer, and learning rate scheduler, as well as saving the best model based on validation accuracy and loss.
@@ -425,7 +451,7 @@ def train(dataloaders, feature_model, linear_classifier, OUTPUT_DIR, EPOCHS=100,
     plot_training_curves(train_data=train_data, OUTPUT_DIR=OUTPUT_DIR)
     return feature_model, linear_classifier
 
-def visualize_model(feature_model, linear_classifier, images, device, class_names, original_img=None, rows=2, cols=4,
+def visualize_model(feature_model=None, linear_classifier=None, images=None, device='cuda', class_names=None, original_img=None, rows=2, cols=4, output_dir=None,
                      true_classes=None, batch_no=None, backbone_model=None, PATCH_SIZE=16, IMG_SIZE=224):
     '''
         Visualize the predictions of the linear classifier on a batch of images. This function takes a batch of images, 
@@ -455,7 +481,11 @@ def visualize_model(feature_model, linear_classifier, images, device, class_name
     with torch.no_grad():
         # img = img[np.newaxis, ...]
         imgs = images[np.newaxis, ...].to(device)
-        features = feature_model(imgs)
+        features = None
+        if feature_model is not None:
+            features = feature_model(imgs)
+        else:
+            features = imgs
         outputs = linear_classifier(features)
         outputs = nn.functional.softmax(outputs, dim=1)
         _, preds = torch.max(outputs, 1)
@@ -465,13 +495,13 @@ def visualize_model(feature_model, linear_classifier, images, device, class_name
         titles = [f'{class_names[preds[0]]}: {outputs[0, preds[0]].squeeze().item():.3f}; true : {class_names[true_classes]}']
     print(f'imgs size : {imgs.size()}')
     # Try to create output directory if it doesn't exist
-    output_dir = 'output/predictions'
+    output_dir = f'{output_dir}/predictions'
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     figname = f'{output_dir}/predictions{class_names[preds[0]]}_true{class_names[true_classes]}_batch{batch_no}.png' if batch_no is not None else f'{output_dir}/predictions{class_names[preds[0]]}_true{class_names[true_classes]}_batch.png'
     if original_img is not None:
         imgs = original_img
-    if batch_no%2==0:
+    if batch_no%100==0:
         # Print test sample every 100 events
         if backbone_model is not None:
             print(f'images shape : {images.shape}')
@@ -523,7 +553,7 @@ def visualize_model(feature_model, linear_classifier, images, device, class_name
     linear_classifier.train(mode=was_training)
     return figname, class_names[preds[0]], class_names[true_classes]
 
-def test(feature_model, linear_classifier, datasets_test, class_names, PATCH_SIZE, IMG_SIZE, OUTPUT_DIR, backbone_model=None, device='cuda'):
+def test(feature_model=None, linear_classifier=None, datasets_test=None, class_names=None, PATCH_SIZE=None, IMG_SIZE=None, OUTPUT_DIR=None, backbone_model=None, device='cuda'):
     '''
         Test the linear classifier on the test set and visualize the predictions. This function iterates over the test data, extracts features using the DINOv2 backbone, 
         feeds the features into the linear classifier to get the predicted classes, and visualizes the predictions along with the true classes. 
@@ -550,7 +580,7 @@ def test(feature_model, linear_classifier, datasets_test, class_names, PATCH_SIZ
     for no, (img, label) in enumerate(datasets_test):
         figname, predicted_class, true_class = visualize_model(feature_model=feature_model, linear_classifier=linear_classifier, images=img, device=device, 
                                                                class_names=class_names, original_img=None, true_classes=label, rows=1, cols=1, batch_no=no, backbone_model=backbone_model,
-                                                                 PATCH_SIZE=PATCH_SIZE, IMG_SIZE=IMG_SIZE)
+                                                                 PATCH_SIZE=PATCH_SIZE, IMG_SIZE=IMG_SIZE, output_dir=OUTPUT_DIR)
         predictions_dict['figname'].append(figname)
         predictions_dict['predicted_class'].append(predicted_class)
         predictions_dict['true_class'].append(true_class)
@@ -576,13 +606,13 @@ if __name__ == "__main__":
         'img_size': 224,
         'patch_size': 16,
         'use_nblocks': 1,
-        'use_avgpool': True,
+        'use_avgpool': False, #True,
         'backbone_name': 'dinov2',
-        # 'model_path': '/nfs/data/1/nitish/dino_output/cvn_properrun_1gpu/model_final.rank_0.pth',
-        'model_path': '/nfs/data/1/rrazakami/work/OUTPUT_DINO/training_dinov2/output_Feb12_2026/model_final.rank_0.pth'
+        'model_path': '/nfs/data/1/nitish/dino_output/cvn_properrun_1gpu/model_final.rank_0.pth',
+        # 'model_path': '/nfs/data/1/rrazakami/work/OUTPUT_DINO/training_dinov2/output_Feb12_2026/model_final.rank_0.pth'
     }
-    # PATH_TO_CONFIG = '/nfs/data/1/nitish/dino_output/cvn_properrun_1gpu/config.yaml'
-    PATH_TO_CONFIG = '/nfs/data/1/rrazakami/work/OUTPUT_DINO/training_dinov2/output_Feb12_2026/config.yaml'
+    PATH_TO_CONFIG = '/nfs/data/1/nitish/dino_output/cvn_properrun_1gpu/config.yaml'
+    # PATH_TO_CONFIG = '/nfs/data/1/rrazakami/work/OUTPUT_DINO/training_dinov2/output_Feb12_2026/config.yaml'
 
     # Data params dict
     params_dict = {
@@ -591,9 +621,9 @@ if __name__ == "__main__":
         'output_dir': 'output',
         'batch_size': 32,
         'num_workers': 0,
-        'N_SAMPLES': 50000
+        'N_SAMPLES': 10000 #50000
     }
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')
 
     dataloaders, class_names, datasets_test, dataseet_splitting = prepare_dataset(params_dict=params_dict, img_size=config_dict['img_size'])
@@ -606,6 +636,7 @@ if __name__ == "__main__":
     config_pretraining = load_config_pretraining(PATH_TO_CONFIG)
 
     feature_model, embed_dim = load_dinov2_backbone(config_dict=config_dict, config_pretraining=config_pretraining, device=device)
+    print(f'Feature model loaded with embed_dim: {embed_dim}')
 
     linear_classifier = LinearClassifierCVN(out_dim=embed_dim, config=config_dict, num_classes=len(class_names))
     linear_classifier.to(device)

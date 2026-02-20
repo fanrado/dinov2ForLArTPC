@@ -7,13 +7,16 @@ import os, sys, torch, yaml
 import torch.nn as nn
 
 class MLP_Patching(nn.Module):
-    def __init__(self, patch_size=16, n_classes=4):
+    def __init__(self, patch_size=16, n_classes=4, dropout_rate=0.5):
         super().__init__()
         self.patch_size = patch_size
         self.n_classes = n_classes
+        # self.dropout_rate = dropout_rate
+        # self.dropout = nn.Dropout(self.dropout_rate)
         self.linear = nn.LazyLinear(self.n_classes) # lazy linear layer, we will initialize it in the forward pass when we know the input dimension
         self.linear.weight.data.normal_(mean=0.0, std=0.01)
         self.linear.bias.data.zero_()
+        
     
     def img2patch2vec(self, x):
         '''
@@ -36,8 +39,8 @@ class MLP_Patching(nn.Module):
         # x shape : (B, C, H, W)
         # convert x into (B, num_patches*patch_size*patch_size*C)
         x = self.img2patch2vec(x)
+        # x = self.dropout(x) # apply dropout to the patch vector before feeding it to the linear layer, this is a common regularization technique to prevent overfitting. We can experiment with different dropout rates to see how it affects the performance of the model.
         # feed x to a linear layer 
-        # return self.linear(x)
         return self.linear(x)
 
 
@@ -58,24 +61,30 @@ if __name__ =="__main__":
     # Data params dict
     params_dict = {
         'data_root': '/nfs/data/1/rrazakami/work/data_cvn/data/dune/2023_trainings/latest/dunevd',
-        'classification_type': 'flavor_2',
+        'classification_type': 'nshowers',
         'output_dir': 'output/mlp',
         'batch_size': 32,
         'num_workers': 0,
-        'N_SAMPLES': 10000 #50000
+        'N_SAMPLES': 50000
     }
     try:
         os.mkdir(params_dict['output_dir'])
     except FileExistsError:
         pass
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')
 
     dataloaders, class_names, datasets_test, dataseet_splitting = prepare_dataset(params_dict=params_dict, img_size=config_dict['img_size'])
+    import json
+    with open(os.path.join(params_dict['output_dir'], 'dataset_splitting.json'), 'w') as f:
+        json.dump(dataseet_splitting, f, indent=4)
+    print('Dataset prepared and splitting saved to output directory...')
 
     MLP = MLP_Patching(patch_size=config_dict['patch_size'], n_classes=len(class_names))
     MLP = MLP.to(device)
+    print('MLP model initialized and moved to device...')
 
     _, linear_classifier = train(dataloaders=dataloaders, linear_classifier=MLP, OUTPUT_DIR=params_dict['output_dir'], EPOCHS=config_dict['epochs'], BATCH_SIZE=params_dict['batch_size'], device=device)
-
+    print('MLP model trained...')
+    print('Testing MLP model on test set...')
     test(feature_model=None, linear_classifier=linear_classifier, datasets_test=datasets_test, class_names=class_names, PATCH_SIZE=config_dict['patch_size'], IMG_SIZE=config_dict['img_size'], OUTPUT_DIR=params_dict['output_dir'], device=device)

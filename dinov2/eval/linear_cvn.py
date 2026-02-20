@@ -617,15 +617,16 @@ if __name__ == "__main__":
     # Data params dict
     params_dict = {
         'data_root': '/nfs/data/1/rrazakami/work/data_cvn/data/dune/2023_trainings/latest/dunevd',
-        'classification_type': 'flavor_2',
+        'classification_type': 'nshowers',
         'output_dir': 'output',
         'batch_size': 32,
         'num_workers': 0,
-        'N_SAMPLES': 10000 #50000
+        'N_SAMPLES': 50000
     }
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')
 
+    print(f'Training for : {params_dict["classification_type"]} classification')
     dataloaders, class_names, datasets_test, dataseet_splitting = prepare_dataset(params_dict=params_dict, img_size=config_dict['img_size'])
 
     ## dump dataset_splitting into json file located at params_dict['output_dir']

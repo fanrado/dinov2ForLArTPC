@@ -113,12 +113,12 @@ class CVNDataset(Dataset):
                         continue  # skip unrecognized
                     ##--
                     ## Uncomment this block if you want to do ntracks or nshowers classification instead of flavor classification. For ntracks classification, we will skip nue events and only classify numuCC events based on their number of tracks. For nshowers classification, we will skip numu events and only classify nueCC events based on their number of showers. For flavor_3 classification, we will include all events and classify them into numu, nue, and nc based on their PDG code.
-                    # if self.classification_type == 'ntracks':
-                    #     if nuPDG == 12: # skip nue, select numuCC only
-                    #         continue
-                    # elif self.classification_type == 'nshowers':
-                    #     if nuPDG == 14: # skip numu, select nueCC only
-                    #         continue
+                    if self.classification_type == 'ntracks':
+                        if nuPDG == 1: # skip nue, select numuCC only
+                            continue
+                    elif self.classification_type == 'nshowers':
+                        if nuPDG == 0: # skip numu, select nueCC only
+                            continue
                     ##--
                     if self.classification_type != 'flavor_3':
                         if nuPDG == 2:  # skip nc 
@@ -226,7 +226,7 @@ class CVNDataset(Dataset):
                 nshowers += 1
             ntracks += int(info[8].strip())  # NProton
             ntracks += int(info[9].strip())  # NPion
-            nshowers += int(info[10].strip())  # NPiZero
+            nshowers += 2*int(info[10].strip())  # NPiZero
             ret['ntracks'] = ntracks
             ret['nshowers'] = nshowers
             ## Cap ntracks and nshowers at 3+ for classification purposes. The value 3 will represent 3 or more tracks/showers, which is a common practice in CVN classification tasks to avoid having too many classes with very few samples.

@@ -38,6 +38,7 @@ def build_model(args, only_teacher=False, img_size=224):
     if args.arch == "minkunet":
         patch_factor = getattr(args, "patch_factor", 4)
         embed_dim = 64
+        assert patch_factor == args.patch_size
         teacher = MinkUNetSparseAttention125(patch_factor=patch_factor)
         if only_teacher:
             return teacher, embed_dim

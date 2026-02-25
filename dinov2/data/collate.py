@@ -96,19 +96,19 @@ def collate_data_and_cast(samples_list, mask_ratio_tuple, mask_probability, patc
     # --------------------------------------------------------
     # NEW: zero out masks on invalid (near-empty) patches
     # --------------------------------------------------------
-    #  if valid_patches is not None:
-    #      # make sure we're on same device
-    #      valid_patches = valid_patches.to(collated_masks.device)
-    #      collated_masks = collated_masks & valid_patches  # (B, N) bool
-    #
-    #      # OPTIONAL: ensure each sample has at least one masked patch
-    #      # (otherwise some rows could be all-False for very sparse images)
-    #      for b in range(B):
-    #          if not collated_masks[b].any():
-    #              # fallback: mask the most "occupied" patch
-    #              idx = valid_patches[b].float().argmax()
-    #              collated_masks[b, idx] = True
-    #
+    if valid_patches is not None:
+        # make sure we're on same device
+        valid_patches = valid_patches.to(collated_masks.device)
+        collated_masks = collated_masks & valid_patches  # (B, N) bool
+
+        #  # OPTIONAL: ensure each sample has at least one masked patch
+        #  # (otherwise some rows could be all-False for very sparse images)
+        #  for b in range(B):
+        #      if not collated_masks[b].any():
+        #          # fallback: mask the most "occupied" patch
+        #          idx = valid_patches[b].float().argmax()
+        #          collated_masks[b, idx] = True
+
     # Recompute indices and weights AFTER filtering
 
     mask_indices_list = collated_masks.flatten().nonzero().flatten()

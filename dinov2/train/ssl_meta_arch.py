@@ -88,7 +88,8 @@ class SSLMetaArch(nn.Module):
         self.dino_out_dim = cfg.dino.head_n_prototypes
 
         self.do_dino = cfg.dino.loss_weight > 0
-        self.do_koleo = cfg.dino.koleo_loss_weight > 0
+        # self.do_koleo = cfg.dino.koleo_loss_weight > 0
+        self.do_koleo = False
         self.do_ibot = cfg.ibot.loss_weight > 0
         self.ibot_separate_head = cfg.ibot.separate_head
 

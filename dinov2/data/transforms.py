@@ -9,6 +9,44 @@ import torch
 from torchvision import transforms
 
 
+class NormalizeNonZero:
+    """
+    Normalize only non-zero values in the image, keeping zeros as zeros.
+    """
+    def __init__(self, mean: Sequence[float], std: Sequence[float]):
+        self.mean = torch.tensor(mean).view(-1, 1, 1)
+        self.std = torch.tensor(std).view(-1, 1, 1)
+    
+    def __call__(self, tensor):
+        """
+        Args:
+            tensor (Tensor): Tensor image of size (C, H, W) to be normalized.
+        Returns:
+            Tensor: Normalized image with zeros preserved.
+        """
+        # Create a mask for non-zero values
+        mask = tensor != 0
+        
+        # Clone the tensor to avoid in-place modification
+        normalized = tensor.clone()
+        
+        # Apply normalization only to non-zero values
+        # Broadcast mean and std to match tensor device
+        mean = self.mean.to(tensor.device)
+        std = self.std.to(tensor.device)
+        
+        # Normalize: (x - mean) / std, but only where mask is True
+        normalized = (normalized - mean) / std
+        
+        # Keep zeros as zeros by applying the mask
+        normalized = torch.where(mask, normalized, torch.zeros_like(normalized))
+        
+        return normalized
+    
+    def __repr__(self):
+        return f'{self.__class__.__name__}(mean={self.mean.squeeze().tolist()}, std={self.std.squeeze().tolist()})'
+
+
 class GaussianBlur(transforms.RandomApply):
     """
     Apply Gaussian Blur to the PIL image.
@@ -48,6 +86,16 @@ def make_normalize_transform(
     std: Sequence[float] = IMAGENET_DEFAULT_STD,
 ) -> transforms.Normalize:
     return transforms.Normalize(mean=mean, std=std)
+
+
+def make_normalize_nonzero_transform(
+    mean: Sequence[float] = IMAGENET_DEFAULT_MEAN,
+    std: Sequence[float] = IMAGENET_DEFAULT_STD,
+) -> NormalizeNonZero:
+    """
+    Create a transform that normalizes only non-zero values, keeping zeros as zeros.
+    """
+    return NormalizeNonZero(mean=mean, std=std)
 
 
 # This roughly matches torchvision's preset for classification training:

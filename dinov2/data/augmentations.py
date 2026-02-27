@@ -10,6 +10,7 @@ from torchvision import transforms
 from .transforms import (
     GaussianBlur,
     make_normalize_transform,
+    make_normalize_nonzero_transform,
 )
 
 
@@ -98,7 +99,7 @@ class DataAugmentationDINO(object):
             self.normalize = transforms.Compose(
                 [
                     transforms.ToTensor(),
-                    make_normalize_transform(),
+                    make_normalize_nonzero_transform(),
                 ]
             )
 

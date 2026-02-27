@@ -10,6 +10,7 @@
 from functools import partial
 import math
 import logging
+import sys
 from typing import Sequence, Tuple, Union, Callable
 
 import numpy as np
@@ -160,9 +161,14 @@ class DinoVisionTransformer(nn.Module):
             self.chunked_blocks = True
             chunked_blocks = []
             chunksize = depth // block_chunks
-            for i in range(0, depth, chunksize):
-                # this is to keep the block index consistent if we chunk the block list
-                chunked_blocks.append([nn.Identity()] * i + blocks_list[i : i + chunksize])
+            print(f'chunking the blocks into {block_chunks} chunks, with chunk size {chunksize}, depth: {depth}')
+            # sys.exit()
+            if depth !=1:
+                for i in range(0, depth, chunksize):
+                    # this is to keep the block index consistent if we chunk the block list
+                    chunked_blocks.append([nn.Identity()] * i + blocks_list[i : i + chunksize])
+            else:
+                chunked_blocks.append([nn.Identity()] + blocks_list)
             self.blocks = nn.ModuleList([BlockChunk(p) for p in chunked_blocks])
         else:
             self.chunked_blocks = False
@@ -361,6 +367,21 @@ def init_weights_vit_timm(module: nn.Module, name: str = ""):
         if module.bias is not None:
             nn.init.zeros_(module.bias)
 
+'''
+    vit_tiny will be trained from scratch and monitored. The idea is to make sure the model is trying to find the global minimum of the loss lanscape, instead of diverging or getting stuck in a bad local minimum. So we set the depth to 1, which is the smallest possible vision transformer, and we can easily visualize the loss landscape in this case. If the loss is diverging, we can try to reduce the learning rate or add more regularization. If the loss is flat, we can try to increase the learning rate or reduce regularization. If the loss is oscillating, we can try to add momentum or use a different optimizer. The goal is to find a good set of hyperparameters that allows the model to converge to a good solution.
+'''
+def vit_tiny(patch_size=16, num_register_tokens=0, **kwargs):
+    model = DinoVisionTransformer(
+        patch_size=patch_size,
+        embed_dim=192,
+        depth=1, # in MLP, 1 hidden layer is the minimum, non-trivial case that can introduce non-linearity in the model. So we set depth=1 for the tiny model, which is the smallest possible vision transformer.
+        num_heads=3,
+        mlp_ratio=4,
+        block_fn=partial(Block, attn_class=MemEffAttention),
+        num_register_tokens=num_register_tokens,
+        **kwargs,
+    )
+    return model
 
 def vit_small(patch_size=16, num_register_tokens=0, **kwargs):
     model = DinoVisionTransformer(

@@ -35,6 +35,55 @@ def named_apply(fn: Callable, module: nn.Module, name="", depth_first=True, incl
         fn(module=module, name=name)
     return module
 
+def compute_feature_variance_per_batch(x_norm_patchtokens, x_norm_clstoken):
+    """
+    Compute feature variance statistics per batch to monitor feature diversity
+    and detect potential feature collapse during training.
+
+    Args:
+        x_norm_patchtokens (torch.Tensor): Normalized patch tokens of shape (B, N, D)
+            where B = batch size, N = number of patches, D = embedding dimension.
+        x_norm_clstoken (torch.Tensor): Normalized CLS tokens of shape (B, D).
+
+    Returns:
+        dict: Dictionary containing variance statistics:
+            - patch_var_per_sample: (B,) mean variance across patches and dims for each sample
+            - patch_var_mean: scalar, average of patch_var_per_sample over the batch
+            - patch_var_across_batch: (N, D) variance of each patch-feature across the batch
+            - patch_var_across_batch_mean: scalar, mean of patch_var_across_batch
+            - cls_var_across_batch: (D,) variance of CLS token features across the batch
+            - cls_var_across_batch_mean: scalar, mean of cls_var_across_batch
+    """
+    # Variance of patch tokens per sample: for each sample compute var across patches
+    # x_norm_patchtokens shape: (B, N, D)
+    patch_var_per_sample = x_norm_patchtokens.var(dim=1).mean(dim=-1)  # (B,)
+    patch_var_mean = patch_var_per_sample.mean()  # scalar
+
+    # Variance across the batch dimension (detects collapse if near zero)
+    patch_var_across_batch = x_norm_patchtokens.var(dim=0)  # (N, D)
+    patch_var_across_batch_mean = patch_var_across_batch.mean()  # scalar
+
+    # CLS token variance across the batch
+    cls_var_across_batch = x_norm_clstoken.var(dim=0)  # (D,)
+    cls_var_across_batch_mean = cls_var_across_batch.mean()  # scalar
+
+    logger.info(
+        f"Feature variance -- "
+        f"patch (per-sample mean): {patch_var_mean.item():.6f}, "
+        f"patch (across-batch mean): {patch_var_across_batch_mean.item():.6f}, "
+        f"cls (across-batch mean): {cls_var_across_batch_mean.item():.6f}"
+    )
+
+    return {
+        "patch_var_per_sample": patch_var_per_sample,
+        "patch_var_mean": patch_var_mean,
+        "patch_var_across_batch": patch_var_across_batch,
+        "patch_var_across_batch_mean": patch_var_across_batch_mean,
+        "cls_var_across_batch": cls_var_across_batch,
+        "cls_var_across_batch_mean": cls_var_across_batch_mean,
+    }
+
+
 class BlockChunk(nn.ModuleList):
     def forward(self, x, return_attention=False):
         if return_attention:
@@ -269,16 +318,27 @@ class DinoVisionTransformer(nn.Module):
         print('Forward pass through the vision transformer backbone ...', 'Input shape: ', x.shape)
         x = self.prepare_tokens_with_masks(x, masks)
 
+        print('Prepared tokens shape: ', x.shape)
+
+        # sys.exit()
         for blk in self.blocks:
             x = blk(x)
 
         x_norm = self.norm(x)
+
+        x_norm_clstoken = x_norm[:, 0]
+        x_norm_patchtokens = x_norm[:, self.num_register_tokens + 1 :]
+
+        # Compute feature variance per batch
+        feature_variance = compute_feature_variance_per_batch(x_norm_patchtokens, x_norm_clstoken)
+
         return {
-            "x_norm_clstoken": x_norm[:, 0],
+            "x_norm_clstoken": x_norm_clstoken,
             "x_norm_regtokens": x_norm[:, 1 : self.num_register_tokens + 1],
-            "x_norm_patchtokens": x_norm[:, self.num_register_tokens + 1 :],
+            "x_norm_patchtokens": x_norm_patchtokens,
             "x_prenorm": x,
             "masks": masks,
+            "feature_variance": feature_variance,
         }
     
     ### Function from dinov1
@@ -374,8 +434,8 @@ def vit_tiny(patch_size=16, num_register_tokens=0, **kwargs):
     model = DinoVisionTransformer(
         patch_size=patch_size,
         embed_dim=192,
-        depth=1, # in MLP, 1 hidden layer is the minimum, non-trivial case that can introduce non-linearity in the model. So we set depth=1 for the tiny model, which is the smallest possible vision transformer.
-        num_heads=3,
+        depth=2, 
+        num_heads=6,
         mlp_ratio=4,
         block_fn=partial(Block, attn_class=MemEffAttention),
         num_register_tokens=num_register_tokens,

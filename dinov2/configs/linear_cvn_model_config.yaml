@@ -1,0 +1,11 @@
+# Model configuration for linear evaluation (config_dict)
+# This file stores the DINOv2 backbone and linear classifier settings.
+
+epochs: 50
+img_size: 224
+patch_size: 16
+use_nblocks: 1
+use_avgpool: true
+backbone_name: "dinov2"
+model_path: "/nfs/data/1/rrazakami/work/dinov2ForLArTPC/out_cvn_memlite/model_final.rank_0.pth"
+pretraining_config_path: "/nfs/data/1/rrazakami/work/dinov2ForLArTPC/out_cvn_memlite/config.yaml"

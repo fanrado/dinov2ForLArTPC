@@ -1,0 +1,9 @@
+# Data configuration for linear evaluation (params_dict)
+# This file stores the dataset and dataloader settings.
+
+data_root: "/nfs/data/1/rrazakami/work/data_cvn/data/dune/2023_trainings/latest/dunevd"
+classification_type: "flavor_2"
+output_dir: "output"
+batch_size: 128
+num_workers: 0
+N_SAMPLES: 50000

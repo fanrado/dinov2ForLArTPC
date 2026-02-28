@@ -5,7 +5,9 @@ from sklearn.metrics import confusion_matrix
 import seaborn as sns
 from sklearn.model_selection import train_test_split
 
-import os, time, yaml
+import json
+import os, sys, yaml
+import click
 import torch
 from torch import nn
 import torchvision
@@ -13,7 +15,7 @@ from torchvision import datasets
 from torch.utils.data import Subset
 
 from dinov2.data import DataAugmentationDINO, SamplerType, make_data_loader, make_dataset
-from dinov2.models.vision_transformer import vit_small, vit_base, vit_large
+from dinov2.models.vision_transformer import vit_small, vit_base, vit_large, vit_tiny
 from dinov2.eval.visualize_attention import get_attn
 from PIL import Image
 
@@ -237,6 +239,8 @@ def load_dinov2_backbone(config_dict, config_pretraining, device='cuda:0'):
         backbone_model = vit_base(patch_size=PATCH_SIZE, img_size=IMG_SIZE)
     elif backbone_arch == 'vit_large':
         backbone_model = vit_large(patch_size=PATCH_SIZE, img_size=IMG_SIZE)
+    elif backbone_arch == 'vit_tiny':
+        backbone_model = vit_tiny(patch_size=PATCH_SIZE, img_size=IMG_SIZE)
     else:
         raise ValueError(f"Unsupported backbone architecture: {backbone_arch}")
     print(f'===Backbone architecture: {backbone_arch}')
@@ -296,6 +300,7 @@ def train_loop(dataloader, feature_model, linear_classifier, loss_fn, optimizer,
             features = X
         pred = linear_classifier(features)
         loss = loss_fn(pred, y)
+        # print(f'loss for batch {batch+1}: {loss.item()}')
         # Backpropagation
         loss.backward()
         optimizer.step()
@@ -306,8 +311,11 @@ def train_loop(dataloader, feature_model, linear_classifier, loss_fn, optimizer,
         # Statistics
         running_loss += loss.item()
         running_corrects += (pred.argmax(1) == y).type(torch.float).sum().item()
+        # print(f'y.size : {y.size(0)}')
         total_samples += y.size(0)
-
+    print(f'running loss : {running_loss}, total_samples : {total_samples}')
+    print(f'running_corrects : {running_corrects}, total_samples : {total_samples}')
+    # sys.exit()
     epoch_loss = running_loss / total_samples
     epoch_acc = running_corrects / total_samples
     print(f'len(running_corrects) : {running_corrects}, total_samples : {total_samples}')
@@ -408,6 +416,13 @@ def train(dataloaders=None, feature_model=None, linear_classifier=None, OUTPUT_D
         momentum=0.9,
         weight_decay=0.0
     )
+    # optimizer = torch.optim.Adam(
+    #     linear_classifier.parameters(),
+    #     # lr=cfg['optim']['base_lr'],
+    #     lr=0.01, #0.005,
+    #     # momentum=0.9,
+    #     # weight_decay=0.0
+    # )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, EPOCHS, eta_min=0)
 
     best_acc = 0.0
@@ -600,50 +615,89 @@ def test(feature_model=None, linear_classifier=None, datasets_test=None, class_n
     plt.savefig(os.path.join(OUTPUT_DIR, 'confusion_matrix.png'))
     plt.close()
 
-if __name__ == "__main__":
-    config_dict = {
-        'epochs': 50,
-        'img_size': 224,
-        'patch_size': 16,
-        'use_nblocks': 1,
-        'use_avgpool': False, #True,
-        'backbone_name': 'dinov2',
-        'model_path': '/nfs/data/1/nitish/dino_output/cvn_properrun_1gpu/model_final.rank_0.pth',
-        # 'model_path': '/nfs/data/1/rrazakami/work/OUTPUT_DINO/training_dinov2/output_Feb12_2026/model_final.rank_0.pth'
-    }
-    PATH_TO_CONFIG = '/nfs/data/1/nitish/dino_output/cvn_properrun_1gpu/config.yaml'
-    # PATH_TO_CONFIG = '/nfs/data/1/rrazakami/work/OUTPUT_DINO/training_dinov2/output_Feb12_2026/config.yaml'
+def load_yaml_config(config_path):
+    '''
+        Load a YAML configuration file and return its contents as a dictionary.
+        Args:
+            config_path: path to the YAML configuration file
+        Returns:
+            config: dictionary containing the configuration parameters
+    '''
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    return config
 
-    # Data params dict
-    params_dict = {
-        'data_root': '/nfs/data/1/rrazakami/work/data_cvn/data/dune/2023_trainings/latest/dunevd',
-        'classification_type': 'nshowers',
-        'output_dir': 'output',
-        'batch_size': 32,
-        'num_workers': 0,
-        'N_SAMPLES': 50000
-    }
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+@click.command()
+@click.option('--model-config', required=True, type=click.Path(exists=True),
+              help='Path to the model configuration YAML file (config_dict).')
+@click.option('--data-config', required=True, type=click.Path(exists=True),
+              help='Path to the data configuration YAML file (params_dict).')
+@click.option('--device', default=None, type=str,
+              help='Device to use for training (e.g. cuda:0, cpu). Defaults to cuda:0 if available.')
+def main(model_config, data_config, device):
+    '''
+        Main entry point for linear evaluation of DINOv2 backbone on CVN data.
+        Loads model and data configurations from YAML files, prepares the dataset,
+        trains the linear classifier, and runs evaluation on the test set.
+    '''
+    # Load configurations from YAML files
+    config_dict = load_yaml_config(model_config)
+    params_dict = load_yaml_config(data_config)
+
+    # Extract the pretraining config path from the model config
+    PATH_TO_CONFIG = config_dict.pop('pretraining_config_path')
+
+    # Set device
+    if device is None:
+        device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    else:
+        device = torch.device(device)
     print(f'Using device: {device}')
 
     print(f'Training for : {params_dict["classification_type"]} classification')
-    dataloaders, class_names, datasets_test, dataseet_splitting = prepare_dataset(params_dict=params_dict, img_size=config_dict['img_size'])
+    dataloaders, class_names, datasets_test, dataset_splitting = prepare_dataset(
+        params_dict=params_dict, img_size=config_dict['img_size']
+    )
 
-    ## dump dataset_splitting into json file located at params_dict['output_dir']
-    import json
+    # Dump dataset_splitting into json file located at params_dict['output_dir']
     with open(os.path.join(params_dict['output_dir'], 'dataset_splitting.json'), 'w') as f:
-        json.dump(dataseet_splitting, f, indent=4)
-        
+        json.dump(dataset_splitting, f, indent=4)
+
     config_pretraining = load_config_pretraining(PATH_TO_CONFIG)
 
-    feature_model, embed_dim = load_dinov2_backbone(config_dict=config_dict, config_pretraining=config_pretraining, device=device)
+    feature_model, embed_dim = load_dinov2_backbone(
+        config_dict=config_dict, config_pretraining=config_pretraining, device=device
+    )
     print(f'Feature model loaded with embed_dim: {embed_dim}')
 
-    linear_classifier = LinearClassifierCVN(out_dim=embed_dim, config=config_dict, num_classes=len(class_names))
+    linear_classifier = LinearClassifierCVN(
+        out_dim=embed_dim, config=config_dict, num_classes=len(class_names)
+    )
     linear_classifier.to(device)
 
-    feature_model, linear_classifier = train(dataloaders=dataloaders, feature_model=feature_model, linear_classifier=linear_classifier, 
-                                             OUTPUT_DIR=params_dict['output_dir'], EPOCHS=config_dict['epochs'], BATCH_SIZE=params_dict['batch_size'], device=device)
+    feature_model, linear_classifier = train(
+        dataloaders=dataloaders,
+        feature_model=feature_model,
+        linear_classifier=linear_classifier,
+        OUTPUT_DIR=params_dict['output_dir'],
+        EPOCHS=config_dict['epochs'],
+        BATCH_SIZE=params_dict['batch_size'],
+        device=device,
+    )
 
-    test(feature_model=feature_model, linear_classifier=linear_classifier, datasets_test=datasets_test, class_names=class_names, 
-         PATCH_SIZE=config_dict['patch_size'], IMG_SIZE=config_dict['img_size'], OUTPUT_DIR=params_dict['output_dir'], backbone_model=feature_model.feature_model, device=device)
+    test(
+        feature_model=feature_model,
+        linear_classifier=linear_classifier,
+        datasets_test=datasets_test,
+        class_names=class_names,
+        PATCH_SIZE=config_dict['patch_size'],
+        IMG_SIZE=config_dict['img_size'],
+        OUTPUT_DIR=params_dict['output_dir'],
+        backbone_model=feature_model.feature_model,
+        device=device,
+    )
+
+
+if __name__ == "__main__":
+    main()

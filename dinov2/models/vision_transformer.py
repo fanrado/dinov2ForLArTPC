@@ -84,6 +84,73 @@ def compute_feature_variance_per_batch(x_norm_patchtokens, x_norm_clstoken):
     }
 
 
+def compute_feature_covariance_per_batch(x_norm_patchtokens, x_norm_clstoken):
+    """
+    Compute feature covariance statistics per batch to monitor inter-feature
+    correlations and detect dimensional collapse (where different feature
+    dimensions become highly correlated).
+
+    Args:
+        x_norm_patchtokens (torch.Tensor): Normalized patch tokens of shape (B, N, D)
+            where B = batch size, N = number of patches, D = embedding dimension.
+        x_norm_clstoken (torch.Tensor): Normalized CLS tokens of shape (B, D).
+
+    Returns:
+        dict: Dictionary containing covariance statistics:
+            - patch_cov_per_sample: (B, D, D) covariance matrix across patches for each sample
+            - patch_cov_off_diag_mean: scalar, mean absolute off-diagonal value averaged over batch
+            - patch_cov_across_batch: (D, D) covariance of patch features pooled across the batch
+            - patch_cov_across_batch_off_diag_mean: scalar, mean absolute off-diagonal value
+            - cls_cov_across_batch: (D, D) covariance of CLS tokens across the batch
+            - cls_cov_across_batch_off_diag_mean: scalar, mean absolute off-diagonal value
+    """
+    B, N, D = x_norm_patchtokens.shape
+
+    # --- Per-sample covariance of patch tokens (across patches) ---
+    # Center each sample's patches: (B, N, D)
+    patch_centered = x_norm_patchtokens - x_norm_patchtokens.mean(dim=1, keepdim=True)
+    # Covariance: (B, D, D)  —  (B, D, N) @ (B, N, D) / (N - 1)
+    patch_cov_per_sample = torch.bmm(patch_centered.transpose(1, 2), patch_centered) / max(N - 1, 1)
+
+    # Mean absolute off-diagonal per sample, then average over batch
+    eye = torch.eye(D, device=patch_cov_per_sample.device, dtype=patch_cov_per_sample.dtype).unsqueeze(0)  # (1, D, D)
+    off_diag_mask = 1.0 - eye
+    patch_off_diag = (patch_cov_per_sample * off_diag_mask).abs().sum(dim=(1, 2)) / max(D * (D - 1), 1)  # (B,)
+    patch_cov_off_diag_mean = patch_off_diag.mean()  # scalar
+
+    # --- Covariance of patch features pooled across the entire batch ---
+    # Reshape to (B*N, D) and compute covariance across all patch tokens
+    all_patches = x_norm_patchtokens.reshape(B * N, D)
+    all_patches_centered = all_patches - all_patches.mean(dim=0, keepdim=True)
+    patch_cov_across_batch = (all_patches_centered.T @ all_patches_centered) / max(B * N - 1, 1)  # (D, D)
+    patch_cov_across_batch_off_diag_mean = (
+        (patch_cov_across_batch * off_diag_mask.squeeze(0)).abs().sum() / max(D * (D - 1), 1)
+    )
+
+    # --- CLS token covariance across the batch ---
+    cls_centered = x_norm_clstoken - x_norm_clstoken.mean(dim=0, keepdim=True)  # (B, D)
+    cls_cov_across_batch = (cls_centered.T @ cls_centered) / max(B - 1, 1)  # (D, D)
+    cls_cov_across_batch_off_diag_mean = (
+        (cls_cov_across_batch * off_diag_mask.squeeze(0)).abs().sum() / max(D * (D - 1), 1)
+    )
+
+    logger.info(
+        f"Feature covariance -- "
+        f"patch off-diag (per-sample mean): {patch_cov_off_diag_mean.item():.6f}, "
+        f"patch off-diag (across-batch): {patch_cov_across_batch_off_diag_mean.item():.6f}, "
+        f"cls off-diag (across-batch): {cls_cov_across_batch_off_diag_mean.item():.6f}"
+    )
+
+    return {
+        "patch_cov_per_sample": patch_cov_per_sample,
+        "patch_cov_off_diag_mean": patch_cov_off_diag_mean,
+        "patch_cov_across_batch": patch_cov_across_batch,
+        "patch_cov_across_batch_off_diag_mean": patch_cov_across_batch_off_diag_mean,
+        "cls_cov_across_batch": cls_cov_across_batch,
+        "cls_cov_across_batch_off_diag_mean": cls_cov_across_batch_off_diag_mean,
+    }
+
+
 class BlockChunk(nn.ModuleList):
     def forward(self, x, return_attention=False):
         if return_attention:
@@ -332,6 +399,9 @@ class DinoVisionTransformer(nn.Module):
         # Compute feature variance per batch
         feature_variance = compute_feature_variance_per_batch(x_norm_patchtokens, x_norm_clstoken)
 
+        # Compute feature covariance per batch
+        feature_covariance = compute_feature_covariance_per_batch(x_norm_patchtokens, x_norm_clstoken)
+
         return {
             "x_norm_clstoken": x_norm_clstoken,
             "x_norm_regtokens": x_norm[:, 1 : self.num_register_tokens + 1],
@@ -339,6 +409,7 @@ class DinoVisionTransformer(nn.Module):
             "x_prenorm": x,
             "masks": masks,
             "feature_variance": feature_variance,
+            "feature_covariance": feature_covariance,
         }
     
     ### Function from dinov1

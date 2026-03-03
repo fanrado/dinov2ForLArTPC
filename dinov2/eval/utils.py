@@ -144,3 +144,108 @@ def extract_features_with_dataloader(model, data_loader, sample_count, gather_on
     assert torch.all(all_labels > -1)
 
     return features, all_labels
+
+###================ Evaluation of the features extracted by the dinov2 model (without running a supervised head on top of the features) ==================###
+class eval_dino_features:
+    def __init__(self, dino_model, n_last_blocks, dataloader):
+        self.dino_model = dino_model
+        self.n_last_blocks = n_last_blocks
+        self.dataloader = dataloader
+    
+    @torch.inference_mode()
+    def extract_features(self, images):
+        with torch.inference_mode():
+            features = self.dino_model.get_intermediate_layers(
+                images, self.n_last_blocks, return_class_token=True
+            )
+        return features
+    
+    def _to_feature_matrix(self, features):
+        """Convert DINO intermediate-layer output into a [B, D] tensor (uses CLS token)."""
+        if isinstance(features, (list, tuple)):
+            features = features[-1]                      # last block
+
+        if isinstance(features, (list, tuple)) and len(features) == 2:
+            _, cls_token = features                      # (patch_tokens, cls_token)
+            return cls_token.float()
+
+        if torch.is_tensor(features):
+            if features.dim() == 3:                      # [B, N, D] – take CLS position
+                return features[:, 0, :].float()
+            if features.dim() == 2:                      # already [B, D]
+                return features.float()
+
+        raise RuntimeError("Unsupported feature format from get_intermediate_layers")
+
+    @torch.inference_mode()
+    def extract_all_features(self):
+        '''
+            Extract features for all samples in the dataloader, gather them across processes, and return as a single feature matrix and label vector.
+        '''
+        all_features = []
+        all_labels = []
+        for samples, targets in self.dataloader:
+            features = self.extract_features(samples.cuda(non_blocking=True))
+            features = self._to_feature_matrix(features).cpu()
+
+            labels = targets[1] if isinstance(targets, (tuple, list)) and len(targets) == 2 else targets
+            labels = labels.cpu()
+
+            all_features.append(features)
+            all_labels.append(labels)
+
+        all_features = torch.cat(all_features, dim=0)   # [N, D]
+        all_labels = torch.cat(all_labels, dim=0)        # [N]
+        return all_features, all_labels
+
+    def calculate_tSNE(self, features, labels, n_components=2, perplexity=30.0):
+        """
+            Calculate the t-SNE embedding of the features and return the 2D coordinates along with the corresponding labels:
+            Arguments:
+                features: [N, D] tensor of features
+                labels: [N] tensor of labels
+                n_components: number of dimensions for t-SNE (default 2)
+                perplexity: t-SNE perplexity parameter (default 30.0) which is the effective number of neighbors considered for each point. Adjust based on dataset size (e.g., 5-50).
+            Returns:
+                tsne_coords: [N, n_components] tensor of t-SNE coordinates
+                labels: [N] tensor of labels (same as input)
+        """
+        from sklearn.manifold import TSNE
+        import numpy as np
+
+        features_np = features.cpu().numpy()
+        tsne = TSNE(n_components=n_components, perplexity=perplexity, random_state=42)
+        tsne_coords_np = tsne.fit_transform(features_np)
+        tsne_coords = torch.from_numpy(tsne_coords_np).float()
+        return tsne_coords, labels
+    
+    def visualize_tSNE(self, tsne_coords, labels):
+        """
+            This function visualizes the t-SNE coordinates in a 2D scatter plot, coloring points by their labels. This shows us how well the DINO features cluster according to the labels, which can indicate how well the self-supervised features capture class structure.
+            Arguments:
+                tsne_coords: [N, 2] tensor of t-SNE coordinates
+                labels: [N] tensor of labels corresponding to each point
+            Returns:
+                A matplotlib figure object containing the t-SNE scatter plot.
+        """
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        tsne_coords_np = tsne_coords.cpu().numpy()
+        labels_np = labels.cpu().numpy()
+
+        plt.figure(figsize=(10, 10))
+        scatter = plt.scatter(tsne_coords_np[:, 0], tsne_coords_np[:, 1], c=labels_np, cmap='tab10', alpha=0.7)
+        plt.colorbar(scatter, ticks=np.unique(labels_np))
+        plt.title('t-SNE Visualization of DINO Features')
+        plt.xlabel('t-SNE Dimension 1')
+        plt.ylabel('t-SNE Dimension 2')
+        plt.grid(True)
+        plt.tight_layout()
+        return plt.gcf()
+    
+    def run_evaluation(self):
+        features, labels = self.extract_all_features()
+        tsne_coords, labels = self.calculate_tSNE(features, labels)
+        fig = self.visualize_tSNE(tsne_coords, labels)
+        return fig

@@ -147,18 +147,22 @@ def extract_features_with_dataloader(model, data_loader, sample_count, gather_on
 
 ###================ Evaluation of the features extracted by the dinov2 model (without running a supervised head on top of the features) ==================###
 class eval_dino_features:
-    def __init__(self, dino_model, n_last_blocks, dataloader):
+    def __init__(self, dino_model, n_last_blocks, dataloader, str_labels: list[str] = None):
         self.dino_model = dino_model
         self.n_last_blocks = n_last_blocks
         self.dataloader = dataloader
+        self.str_labels = str_labels
     
+    # @torch.inference_mode()
+    # def extract_features(self, images):
+    #     with torch.inference_mode():
+    #         features = self.dino_model.get_intermediate_layers(
+    #             images, self.n_last_blocks, return_class_token=True
+    #         )
+    #     return features
     @torch.inference_mode()
     def extract_features(self, images):
-        with torch.inference_mode():
-            features = self.dino_model.get_intermediate_layers(
-                images, self.n_last_blocks, return_class_token=True
-            )
-        return features
+        return self.dino_model(images)
     
     def _to_feature_matrix(self, features):
         """Convert DINO intermediate-layer output into a [B, D] tensor (uses CLS token)."""
@@ -166,6 +170,7 @@ class eval_dino_features:
             features = features[-1]                      # last block
 
         if isinstance(features, (list, tuple)) and len(features) == 2:
+            print('Extracting CLS token from features returned as (patch_tokens, cls_token)======')
             _, cls_token = features                      # (patch_tokens, cls_token)
             return cls_token.float()
 
@@ -236,7 +241,10 @@ class eval_dino_features:
 
         plt.figure(figsize=(10, 10))
         scatter = plt.scatter(tsne_coords_np[:, 0], tsne_coords_np[:, 1], c=labels_np, cmap='tab10', alpha=0.7)
-        plt.colorbar(scatter, ticks=np.unique(labels_np))
+        if self.str_labels is not None:
+            legend1 = plt.legend(*scatter.legend_elements(), title="Classes")
+            plt.gca().add_artist(legend1)
+            plt.legend(handles=scatter.legend_elements()[0], labels=self.str_labels, title="Classes", loc='upper right')
         plt.title('t-SNE Visualization of DINO Features')
         plt.xlabel('t-SNE Dimension 1')
         plt.ylabel('t-SNE Dimension 2')
@@ -249,3 +257,56 @@ class eval_dino_features:
         tsne_coords, labels = self.calculate_tSNE(features, labels)
         fig = self.visualize_tSNE(tsne_coords, labels)
         return fig
+
+from linear_cvn import load_yaml_config, prepare_dataset
+import click
+from linear_cvn import load_dinov2_backbone, load_config_pretraining
+@click.command()
+@click.option('--model-config', required=True, type=click.Path(exists=True),
+              help='Path to the model configuration YAML file (config_dict).')
+@click.option('--data-config', required=True, type=click.Path(exists=True),
+              help='Path to the data configuration YAML file (params_dict).')
+@click.option('--device', default=None, type=str,
+              help='Device to use for training (e.g. cuda:0, cpu). Defaults to cuda:0 if available.')
+def main(model_config, data_config, device):
+    '''
+        Main entry point for linear evaluation of DINOv2 backbone on CVN data.
+        Loads model and data configurations from YAML files, prepares the dataset,
+        trains the linear classifier, and runs evaluation on the test set.
+    '''
+    # Load configurations from YAML files
+    config_dict = load_yaml_config(model_config)
+    params_dict = load_yaml_config(data_config)
+
+    # Extract the pretraining config path from the model config
+    PATH_TO_CONFIG = config_dict.pop('pretraining_config_path')
+
+    # Set device
+    if device is None:
+        device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    else:
+        device = torch.device(device)
+    print(f'Using device: {device}')
+
+    print(f'Training for : {params_dict["classification_type"]} classification')
+    dataloaders, class_names, datasets_test, dataset_splitting = prepare_dataset(
+        params_dict=params_dict, img_size=config_dict['img_size']
+    )
+
+    config_pretraining = load_config_pretraining(PATH_TO_CONFIG)
+
+    feature_model, embed_dim = load_dinov2_backbone(
+        config_dict=config_dict, config_pretraining=config_pretraining, device=device
+    )
+
+    eval_pipeline = eval_dino_features(
+        dino_model=feature_model,
+        n_last_blocks=config_dict['use_nblocks'],
+        dataloader=dataloaders['train'],
+        str_labels=class_names
+    )
+    fig = eval_pipeline.run_evaluation()
+    fig.savefig('tsne_visualization.png')
+
+if __name__ == "__main__":
+    main()

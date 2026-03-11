@@ -51,6 +51,7 @@ class DataAugmentationDINO(object):
                     ## Instead of center crop, let's resize the image
                     transforms.Resize(global_crops_size, interpolation=transforms.InterpolationMode.BICUBIC),
                     transforms.ToTensor(),
+                    # make_normalize_nonzero_transform(),
                 ]
             )
         else:

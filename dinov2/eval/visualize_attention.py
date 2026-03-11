@@ -21,8 +21,9 @@ def load_model(path_to_model: str, patch_size: int=14, image_size: tuple=(500, 5
     :param model_type: Type of the Vision Transformer model. These models use the dino architecture. Options are: 'vit_small', 'vit_base', 'vit_large', 'vit_giant2
         :type model_type: str
     """
-    from dinov2.models.vision_transformer import vit_large, vit_small, vit_base, vit_giant2
+    from dinov2.models.vision_transformer import vit_large, vit_small, vit_base, vit_giant2, vit_tiny
     models = {
+        'vit_tiny': vit_tiny,
         'vit_small': vit_small,
         'vit_base': vit_base,
         'vit_large': vit_large,
@@ -72,7 +73,7 @@ def get_attn(model: nn.Module, eval_gz_path: str=None, iteration: int=None, duri
     # image_size = (500, 500)
     # patch_size = 14
     # event           = _read_array(gz_path=eval_gz_path)
-    image_size      = tuple((image_size, image_size))
+    # image_size      = tuple((image_size, image_size))
     patch_size      = patch_size
 
     device          = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -82,20 +83,30 @@ def get_attn(model: nn.Module, eval_gz_path: str=None, iteration: int=None, duri
     model.eval()
 
     img0 = event
-    print(f"Original image size: {img0.shape}")
+    print(f'img0 : {img0}')
+    print(f'img0 type: {type(img0)}')
+    img = None
     if eval_gz_path is not None:
+        print(f'image size : {image_size}')
         transform = pth_transforms.Compose([
                 pth_transforms.Resize(image_size),
                 pth_transforms.ToTensor(),
                 pth_transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
             ])
         img = transform(img0)
+        print(f'type of img: {type(img)}')
+        print(f'shape of img: {img.shape}')
     else:
         img = img0
-    print(f"Transformed image size: {img.shape}")
+    
+    # print(f'type of img: {type(img)}')
+    # print(f'shape of img: {img.shape}')
+
+    # print(f"Transformed image size: {img.shape}")
     # make the image divisible by the patch size
     w, h = img.shape[1] - img.shape[1] % patch_size, img.shape[2] - img.shape[2] % patch_size
     img = img[:, :w, :h].unsqueeze(0)
+    print(f'img.shape after making divisible by patch size: {img.shape}')
 
     w_featmap = img.shape[-2] // patch_size
     h_featmap = img.shape[-1] // patch_size
@@ -105,6 +116,8 @@ def get_attn(model: nn.Module, eval_gz_path: str=None, iteration: int=None, duri
 
     ## what the cls token is looking at in the input image
     attentions = attentions[0, :, 0, 1:].reshape(nh, -1)
+    print(f'attentions shape after selecting cls token: {attentions.shape}')
+    print(f'nh {nh}, w_featmap {w_featmap}, h_featmap {h_featmap}')
 
     attentions = attentions.reshape(nh, w_featmap, h_featmap)
     attentions = nn.functional.interpolate(attentions.unsqueeze(0), scale_factor=patch_size, mode="nearest")[0].cpu().detach().numpy()
@@ -168,7 +181,7 @@ def visualize_attn_cls():
     for gz_file in [f for f in os.listdir(args.eval_gz_path) if f.endswith('.gz')]:
         eval_gz_path = os.path.join(args.eval_gz_path, gz_file)
         print(f"Processing {eval_gz_path}...")
-        get_attn(model=model, eval_gz_path=eval_gz_path, iteration=None, duringTraining=False, eval_output_dir=args.eval_output_dir, sumoverheads=True)
+        get_attn(model=model, eval_gz_path=eval_gz_path, iteration=None, duringTraining=False, eval_output_dir=args.eval_output_dir, sumoverheads=True, image_size=tuple(args.image_size), patch_size=args.patch_size)
         # break  # Remove this break to process all files
         # if i == 2:
         #     break

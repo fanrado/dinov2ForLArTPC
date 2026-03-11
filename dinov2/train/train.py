@@ -283,6 +283,7 @@ def do_train(cfg, model, resume=False):
         # compute losses
         print('Forward and backward pass ...')
         print(f'Data shape: {data["collated_global_crops"].shape}')
+        print(f'Data shape : {data["collated_local_crops"].shape}')
         optimizer.zero_grad(set_to_none=True)
         loss_dict = model.forward_backward(data, teacher_temp=teacher_temp)
 

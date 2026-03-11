@@ -66,11 +66,11 @@ train:
   seed: 0
   num_workers: 10
   # OFFICIAL_EPOCH_LENGTH: 1250
-  OFFICIAL_EPOCH_LENGTH: 300
+  OFFICIAL_EPOCH_LENGTH: 100 #300
   cache_dataset: true
   centering: "centering" # or "sinkhorn_knopp"
 student:
-  arch: vit_large
+  arch: vit_tiny
   patch_size: 16
   # patch_size: 14 # for the 168x168 global crops
   # patch_size: 4 # for LArTPC images
@@ -91,18 +91,18 @@ teacher:
   final_momentum_teacher: 1
   warmup_teacher_temp: 0.04
   teacher_temp: 0.07
-  warmup_teacher_temp_epochs: 30
+  warmup_teacher_temp_epochs: 5 # 30
   # warmup_teacher_temp_epochs: 2
 optim:
-  epochs: 100
+  epochs: 20 #100
   weight_decay: 0.04
   weight_decay_end: 0.4
   # weight_decay: 0.1
   # weight_decay_end: 0.25
-  base_lr: 0.004  # learning rate for a batch size of 1024
-  lr: 0.  # will be set after applying scaling rule
-  # base_lr: 0.01
-  # lr: 0.4  # will be set after applying scaling rule
+  # base_lr: 0.004  # learning rate for a batch size of 1024
+  # lr: 0.  # will be set after applying scaling rule
+  base_lr: 0.01
+  lr: 0.004  # will be set after applying scaling rule
   warmup_epochs: 10
   min_lr: 1.0e-06
   # min_lr: 1.0e-3

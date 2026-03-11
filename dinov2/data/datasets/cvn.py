@@ -226,7 +226,7 @@ class CVNDataset(Dataset):
                 nshowers += 1
             ntracks += int(info[8].strip())  # NProton
             ntracks += int(info[9].strip())  # NPion
-            nshowers += 2*int(info[10].strip())  # NPiZero
+            nshowers += 2*int(info[10].strip())  # NPiZero : 2 showers per pi0
             ret['ntracks'] = ntracks
             ret['nshowers'] = nshowers
             ## Cap ntracks and nshowers at 3+ for classification purposes. The value 3 will represent 3 or more tracks/showers, which is a common practice in CVN classification tasks to avoid having too many classes with very few samples.

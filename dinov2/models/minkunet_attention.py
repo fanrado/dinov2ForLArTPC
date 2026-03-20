@@ -45,7 +45,8 @@ class MinkUNetSparseAttention(nn.Module):
                  patch_factor: int = 4,
                  **kwargs,):
         super().__init__()
-
+        
+        # flash_attention = False  ## this needs to be turned off if one wants to use flash attention.
         assert patch_factor in (1, 2, 4)
         self.mask_token = nn.Parameter(torch.zeros(1, 64))
         self.patch_factor = patch_factor
@@ -86,6 +87,13 @@ class MinkUNetSparseAttention(nn.Module):
             nn.Flatten(),
             nn.LayerNorm(64, eps=1e-6)
         )
+        # Second CLS head pooled from the decoder output (after final).
+        # Averaging the two CLS tokens gives DINO + KoLeo a gradient path
+        # into the decoder, which otherwise only receives iBOT gradients.
+        self.cls_head_dec = nn.Sequential(
+            nn.Flatten(),
+            nn.LayerNorm(64, eps=1e-6)
+        )
 
     def prepare_tokens_with_masks(self, x, masks=None):
         B, nc, w, h = x.shape
@@ -108,7 +116,8 @@ class MinkUNetSparseAttention(nn.Module):
         dino_dict = {}
         ds_img_size = (img_size[0]//self.patch_factor, img_size[1]//self.patch_factor)
         # first mask the image appropriately
-        x = self.prepare_tokens_with_masks(x, masks)
+        # x = self.prepare_tokens_with_masks(x, masks)
+
         # Convert dense input image to sparse voxel representation
         orig_batch_size = x.shape[0]
         xs = Voxels.from_dense(x)
@@ -147,45 +156,68 @@ class MinkUNetSparseAttention(nn.Module):
         if B_cls < orig_batch_size:
             pad_tensor_cls = torch.zeros(orig_batch_size-B_cls, D_cls, device=out_cls.device, dtype=out_cls.dtype)
             out_cls = torch.cat([out_cls, pad_tensor_cls], dim=0)
-        dino_dict["x_norm_clstoken"] = out_cls
-        if self.patch_factor == 4:
-            d_out = out.to_dense(channel_dim=1, spatial_shape=ds_img_size).permute(0, 2, 3, 1) # [B,64,125,125] dense tensor
-            B, Hp, Wp, D = d_out.shape
-            if B < orig_batch_size:
-                pad_tensor = torch.zeros(orig_batch_size-B, Hp, Wp, D, device=d_out.device, dtype=d_out.dtype)
-                d_out = torch.cat([d_out, pad_tensor], dim=0)
-            #  print("Batch from Sparse->Dense : ", B)
-            #  print("Unique Batch indices : ", out.coords[:, 0].unique())
-            #  print("Batch from Sparse : ", out.features.shape)
-            #  print("Offsets Shape : ", out.offsets.shape)
-            #  print("Offsets : ", out.offsets)
-            patches = d_out.reshape(orig_batch_size, Hp * Wp, D)
+        # x_norm_clstoken is set after the decoder (see below) so DINO/KoLeo
+        # gradient reaches both the bottleneck and the decoder branches.
+        # if self.patch_factor == 4:
+        #     d_out = out.to_dense(channel_dim=1, spatial_shape=ds_img_size).permute(0, 2, 3, 1) # [B,64,125,125] dense tensor
+        #     B, Hp, Wp, D = d_out.shape
+        #     if B < orig_batch_size:
+        #         pad_tensor = torch.zeros(orig_batch_size-B, Hp, Wp, D, device=d_out.device, dtype=d_out.dtype)
+        #         d_out = torch.cat([d_out, pad_tensor], dim=0)
+        #     #  print("Batch from Sparse->Dense : ", B)
+        #     #  print("Unique Batch indices : ", out.coords[:, 0].unique())
+        #     #  print("Batch from Sparse : ", out.features.shape)
+        #     #  print("Offsets Shape : ", out.offsets.shape)
+        #     #  print("Offsets : ", out.offsets)
+        #     patches = d_out.reshape(orig_batch_size, Hp * Wp, D)
+        #     dino_dict["x_norm_patchtokens"] = self.patch_head(patches)
+        # # ============ DECODER ============
+    
+        # # # Stage 1: 125×125 to 250×250
+        out = self.convtr5(out, out_b1p2)       # Upsample, guided by skip geometry
+        # print("After convtr5, out shape: ", out.features.shape)
+        out = cat(out, out_b1p2)                # [B,64,250,250] + [B,32,250,250] = [B,96,250,250]
+        # print("After cat with skip connection, out shape: ", out.features.shape)
+        out = self.block6(out)                  # Process to [B,64,250,250]
+        # print("After block6, out shape: ", out.features.shape)
+        # # if self.patch_factor == 2:
+        # #     d_out = out.to_dense(channel_dim=1, spatial_shape=ds_img_size).permute(0, 2, 3, 1) # [B,64,250,250] dense tensor
+        # #     B, Hp, Wp, D = d_out.shape
+        # #     patches = d_out.reshape(B, Hp * Wp, D)
+        # #     dino_dict["x_norm_patchtokens"] = self.patch_head(patches)
+    
+        # # # Stage 2: 250×250 to 500×500 (full resolution)run
+        out = self.convtr7(out, out_p1)         # Upsample
+        # print("After convtr7, out shape: ", out.features.shape)
+
+        out = cat(out, out_p1)                  # [B,64,500,500] + [B,32,500,500] = [B,96,500,500]
+        # print("After cat with skip connection, out shape: ", out.features.shape)
+        out = self.block8(out)                  # Process to [B,64,500,500]
+        # print("After block8, out shape: ", out.features.shape)
+        # # ============ FINAL PROJECTION + HEAD ============
+        out = self.final(out)                   # Feature refinement [B,64,500,500]
+        # print("After final conv, out shape: ", out.features.shape)
+
+        # Pool decoder output and average with bottleneck CLS so that the
+        # DINO + KoLeo losses send gradients through the decoder as well.
+        pooled_dec = global_pool(out, reduce='mean')
+        out_cls_dec = self.cls_head_dec(pooled_dec.features)
+        B_dec, D_dec = out_cls_dec.shape
+        if B_dec < orig_batch_size:
+            pad_dec = torch.zeros(orig_batch_size - B_dec, D_dec, device=out_cls_dec.device, dtype=out_cls_dec.dtype)
+            out_cls_dec = torch.cat([out_cls_dec, pad_dec], dim=0)
+        dino_dict["x_norm_clstoken"] = (out_cls + out_cls_dec) / 2
+
+        if self.patch_factor > 1:
+            # to_dense() uses index_put internally (differentiable), so grad_fn is preserved
+            # and gradients flow back through block8 and block6 via the iBOT loss.
+            d_out = out.to_dense(channel_dim=1, spatial_shape=img_size)  # [B, D, H, W]
+            # sys.exit()
+            # pool each (patch_factor x patch_factor) window -> [B, D, Hp, Wp]
+            d_out = F.avg_pool2d(d_out, kernel_size=self.patch_factor, stride=self.patch_factor)
+            d_out = d_out.permute(0, 2, 3, 1)  # [B, Hp, Wp, D]
+            patches = d_out.reshape(orig_batch_size, d_out.shape[1] * d_out.shape[2], d_out.shape[3])
             dino_dict["x_norm_patchtokens"] = self.patch_head(patches)
-        #  # ============ DECODER ============
-        #
-        #  # Stage 1: 125×125 to 250×250
-        #  out = self.convtr5(out, out_b1p2)       # Upsample, guided by skip geometry
-        #  out = cat(out, out_b1p2)                # [B,64,250,250] + [B,32,250,250] = [B,96,250,250]
-        #  out = self.block6(out)                  # Process to [B,64,250,250]
-        #  if self.patch_factor == 2:
-        #      d_out = out.to_dense(channel_dim=1, spatial_shape=ds_img_size).permute(0, 2, 3, 1) # [B,64,250,250] dense tensor
-        #      B, Hp, Wp, D = d_out.shape
-        #      patches = d_out.reshape(B, Hp * Wp, D)
-        #      dino_dict["x_norm_patchtokens"] = self.patch_head(patches)
-        #
-        #  # Stage 2: 250×250 to 500×500 (full resolution)run
-        #  out = self.convtr7(out, out_p1)         # Upsample
-        #  out = cat(out, out_p1)                  # [B,64,500,500] + [B,32,500,500] = [B,96,500,500]
-        #  out = self.block8(out)                  # Process to [B,64,500,500]
-        #
-        #  # ============ FINAL PROJECTION + HEAD ============
-        #  out = self.final(out)                   # Feature refinement [B,64,500,500]
-        #
-        #  if self.patch_factor == 1:
-        #      d_out = out.to_dense(channel_dim=1, spatial_shape=ds_img_size).permute(0, 2, 3, 1) # [B,64,500,500] dense tensor
-        #      B, Hp, Wp, D = d_out.shape
-        #      patches = d_out.reshape(B, Hp * Wp, D)
-        #      dino_dict["x_norm_patchtokens"] = self.patch_head(patches)
         if is_training:
             return dino_dict
         else:
@@ -194,12 +226,14 @@ class MinkUNetSparseAttention(nn.Module):
     def forward(self, x: Union[Tensor, List[Tensor]], masks=None, is_training: bool = True):
         # mirrors DinoVisionTransformer.forward
         if isinstance(x, (list, tuple)):       # [global, local]
+            print('Received list input to forward, assuming global and local tokens----')
             g, l = x
             m_g, m_l = masks
             g_h, g_w = g.shape[-2], g.shape[-1]
             l_h, l_w = l.shape[-2], l.shape[-1]
             return self.forward_one(g, is_training, (g_h, g_w), masks=m_g), self.forward_one(l, is_training, (l_h, l_w), masks=m_l)
         else:
+            print('Received single tensor input to forward, assuming global tokens----<<<')
             x_h, x_w = x.shape[-2], x.shape[-1]
             return self.forward_one(x, is_training, (x_h, x_w), masks)
 

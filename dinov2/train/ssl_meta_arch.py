@@ -250,18 +250,10 @@ class SSLMetaArch(nn.Module):
         if do_ibot:
             _dim = student_global_backbone_output_dict["x_norm_clstoken"].shape[-1]
             ibot_student_patch_tokens = student_global_backbone_output_dict["x_norm_patchtokens"]
-            # Use index_select (differentiable) then cat with zero-padding instead of
-            # copy_() into new_zeros().  new_zeros() produces a leaf with requires_grad=False;
-            # an in-place copy_ into it never builds a grad_fn, so the iBOT loss gradient
-            # cannot reach x_norm_patchtokens (and therefore block6/block8).
-            selected_patch_tokens = torch.index_select(
-                ibot_student_patch_tokens.flatten(0, 1), dim=0, index=mask_indices_list
+            buffer_tensor_patch_tokens = ibot_student_patch_tokens.new_zeros(upperbound, _dim)
+            buffer_tensor_patch_tokens[:n_masked_patches].copy_(
+                torch.index_select(ibot_student_patch_tokens.flatten(0, 1), dim=0, index=mask_indices_list)
             )
-            if upperbound > n_masked_patches:
-                padding = ibot_student_patch_tokens.new_zeros(upperbound - n_masked_patches, _dim)
-                buffer_tensor_patch_tokens = torch.cat([selected_patch_tokens, padding], dim=0)
-            else:
-                buffer_tensor_patch_tokens = selected_patch_tokens
             if not self.ibot_separate_head:
                 inputs_for_student_head_list.append(buffer_tensor_patch_tokens.unsqueeze(0))
             else:
@@ -397,19 +389,49 @@ class SSLMetaArch(nn.Module):
 
     def update_teacher(self, m):
         with torch.no_grad():
+            student_param_list = []
+            teacher_param_list = []
+
+        # Try to collect params per submodule (backbone / heads), preferring FSDP modules if present
             for k in self.student.keys():
                 s_mod = self.student[k]
                 t_mod = self.teacher[k]
-                # Use named_parameters() which recursively includes nested FSDP module params.
-                # Match by name to handle structural differences (e.g., student has inner BN-FSDP
-                # modules while teacher does not), and to avoid requires_grad filtering issues.
-                s_named = dict(s_mod.named_parameters())
-                t_named = dict(t_mod.named_parameters())
-                for name, t_param in t_named.items():
-                    if name in s_named:
-                        t_param.mul_(m).add_(s_named[name].detach(), alpha=1 - m)
-                    else:
-                        logger.warning(f"update_teacher: param '{name}' in teacher[{k}] not found in student[{k}]")
+
+            # FSDP-aware path
+                try:
+                    s_fsdp = list(get_fsdp_modules(s_mod))
+                    t_fsdp = list(get_fsdp_modules(t_mod))
+                except Exception:
+                    s_fsdp, t_fsdp = [], []
+
+                if s_fsdp and t_fsdp and len(s_fsdp) == len(t_fsdp):
+                # Some FSDP versions expose .params, otherwise fall back to .parameters()
+                    for ms, mt in zip(s_fsdp, t_fsdp):
+                        s_params = getattr(ms, "params", list(ms.parameters()))
+                        t_params = getattr(mt, "params", list(mt.parameters()))
+                        student_param_list += [p for p in s_params if p.requires_grad]
+                        teacher_param_list += list(t_params)
+                else:
+                # Non-FSDP (or mismatch): just use the raw modules
+                    student_param_list += [p for p in s_mod.parameters() if p.requires_grad]
+                    teacher_param_list += list(t_mod.parameters())
+
+        # Ultimate fallback: whole-model zip
+            if not teacher_param_list:
+                student_param_list = [p for p in self.student.parameters() if p.requires_grad]
+                teacher_param_list = list(self.teacher.parameters())
+
+        # Sanity: keep lists aligned
+            assert len(student_param_list) == len(teacher_param_list), \
+                f"Param length mismatch: student={len(student_param_list)} teacher={len(teacher_param_list)}"
+
+        # Fast foreach when it works; otherwise per-tensor loop
+            try:
+                torch._foreach_mul_(teacher_param_list, m)
+                torch._foreach_add_(teacher_param_list, student_param_list, alpha=1 - m)
+            except Exception:
+                for tp, sp in zip(teacher_param_list, student_param_list):
+                    tp.mul_(m).add_(sp, alpha=1 - m)
 
 
 
